@@ -39,7 +39,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./docker/keycloak/realms:/opt/keycloak/data/import:ro
+      - ./docker/keycloak/realms:/opt/keycloak/data/import
 
   icewarp:
     # IceWarp Server is a licensed product. Set ICEWARP_IMAGE in .env to the
