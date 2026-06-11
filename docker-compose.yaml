@@ -41,17 +41,50 @@ services:
     volumes:
       - ./docker/keycloak/realms:/opt/keycloak/data/import
 
-  icewarp:
-    # IceWarp Server is a licensed product. Set ICEWARP_IMAGE in .env to the
-    # official image you have access to — the placeholder default will not pull.
-    image: ${ICEWARP_IMAGE:-icewarp/server:latest}
+  icewarp-mariadb:
+    image: mariadb:10.6
     restart: unless-stopped
+    command: --lower-case-table-names=1
+    environment:
+      MARIADB_ROOT_PASSWORD: ${ICEWARP_DB_PASSWORD:-password}
+    volumes:
+      - icewarp_mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Document-preview service. IceWarp's entrypoint waits for it on startup and
+  # can't be disabled, so it runs even though the bridge doesn't use previews.
+  laforge:
+    image: ${LAFORGE_IMAGE:-icewarptechnology/laforge:2.2.3}
+    restart: unless-stopped
+
+  icewarp:
+    image: ${ICEWARP_IMAGE:-icewarptechnology/icewarp-server:14}
+    restart: unless-stopped
+    depends_on:
+      icewarp-mariadb:
+        condition: service_healthy
+      laforge:
+        condition: service_started
+    environment:
+      MARIADB_HOST: icewarp-mariadb
+      MARIADB_ROOT_PASSWORD: ${ICEWARP_DB_PASSWORD:-password}
+      ICEWARP_DOMAIN: ${ICEWARP_DOMAIN:-icewarp.local}
+      ICEWARP_ADMIN_USER: ${ICEWARP_ADMIN_USER:-admin}
+      ICEWARP_ADMIN_PASS: ${ICEWARP_ADMIN_PASSWORD:-password}
+      ICEWARP_PUBLIC_HOSTNAME: ${ICEWARP_PUBLIC_HOSTNAME:-localhost}
+      # A 30-day trial license is requested automatically while ICEWARP_LICENSE
+      # is unset. LAFORGE_URL defaults to http://laforge:25791 (service above).
     ports:
       - "8081:80"    # web admin / webmail / REST API
       - "8443:443"   # HTTPS
     volumes:
-      - icewarp_data:/data
+      - icewarp_data:/opt/icewarp-data
 
 volumes:
   postgres_data:
   icewarp_data:
+  icewarp_mariadb_data:
