@@ -1,0 +1,16 @@
+dn: ${LDAP_INIT_ORG_DN}
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+dc: icewarp
+o: IceWarp LDAP Bridge
+
+dn: ou=people,${LDAP_INIT_ORG_DN}
+objectClass: organizationalUnit
+ou: people
+description: Users
+
+dn: ou=groups,${LDAP_INIT_ORG_DN}
+objectClass: organizationalUnit
+ou: groups
+description: Groups

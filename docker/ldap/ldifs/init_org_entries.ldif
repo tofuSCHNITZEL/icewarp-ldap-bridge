@@ -1,0 +1,36 @@
+##############################
+# Users (password for all: "password")
+##############################
+dn: uid=jdoe,ou=people,${LDAP_INIT_ORG_DN}
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jdoe
+cn: John Doe
+givenName: John
+sn: Doe
+mail: john.doe@icewarp.local
+userPassword:: cGFzc3dvcmQ=
+
+dn: uid=asmith,ou=people,${LDAP_INIT_ORG_DN}
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: asmith
+cn: Alice Smith
+givenName: Alice
+sn: Smith
+mail: alice.smith@icewarp.local
+userPassword:: cGFzc3dvcmQ=
+
+##############################
+# Groups
+##############################
+dn: cn=users,ou=groups,${LDAP_INIT_ORG_DN}
+objectClass: top
+objectClass: groupOfNames
+cn: users
+member: uid=jdoe,ou=people,${LDAP_INIT_ORG_DN}
+member: uid=asmith,ou=people,${LDAP_INIT_ORG_DN}

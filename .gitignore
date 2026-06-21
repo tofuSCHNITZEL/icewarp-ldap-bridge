@@ -2,8 +2,5 @@
 .claude/settings.local.json
 .devcontainer/devcontainer-lock.json
 
-# Local-only snapshot of the IceWarp image internals for offline code
-# exploration (see scripts/dump-icewarp-reference.sh). IceWarp is proprietary,
-# so the copied files must never be committed — only the README is tracked.
-/.icewarp-ref/*
-!/.icewarp-ref/README.md
+# Default folder for INTROSPECT_ICEWARP raw RPC body dumps (local debugging).
+/icewarp-introspect/

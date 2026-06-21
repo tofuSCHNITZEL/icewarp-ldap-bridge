@@ -18,6 +18,21 @@ services:
       timeout: 5s
       retries: 10
 
+  ldap:
+    image: vegardit/openldap:latest
+    restart: unless-stopped
+    environment:
+      LDAP_INIT_ORG_DN: ${LDAP_ORG_DN:-dc=icewarp,dc=local}
+      LDAP_INIT_ROOT_USER_DN: ${LDAP_ADMIN_DN:-uid=admin,dc=icewarp,dc=local}
+      LDAP_INIT_ROOT_USER_PW: ${LDAP_ADMIN_PASSWORD:-password}
+    ports:
+      - "1389:389"
+    volumes:
+      - ./docker/ldap/ldifs/init_org_tree.ldif:/opt/ldifs/init_org_tree.ldif
+      - ./docker/ldap/ldifs/init_org_entries.ldif:/opt/ldifs/init_org_entries.ldif
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.5.1
     restart: unless-stopped
@@ -88,3 +103,5 @@ volumes:
   postgres_data:
   icewarp_data:
   icewarp_mariadb_data:
+  ldap_data:
+  ldap_config:

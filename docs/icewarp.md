@@ -24,8 +24,8 @@ feasibility work, not a full product reference.
 ## Access
 
 - Web admin console: <http://localhost:8081/admin/>
-- Admin login: `admin@icewarp.local` / `IceWarpDev2026!` (`ICEWARP_ADMIN_*` in
-  `.env`).
+- Admin login: `admin@icewarp.local`, password from `ICEWARP_ADMIN_PASSWORD` in
+  `.env` (see `.env.example`).
 - Primary domain: `icewarp.local` (`ICEWARP_DOMAIN`).
 
 ### Two separate web apps
@@ -164,9 +164,6 @@ Probed against the running on-prem image (`14.3.0.3`). Codes below are from
    something you invoke over the network from outside. Note: `idp.php`
    (`IceWarpServer.IDP`) is a **backup/archive file API** (`AddFiles`,
    `RestoreFiles`), *not* an identity provider — the name is misleading.
-   To read this source offline (e.g. from the devcontainer, which has no Docker
-   access), snapshot it into the gitignored `.icewarp-ref/` with
-   `scripts/dump-icewarp-reference.sh`.
 4. **WebClient API** — `/webmail/server/webmail.php` (200), the endpoint the
    webmail frontend calls; user-level operations behind a webmail session.
 5. **Standard protocols** (the durable, version-independent integration points):
