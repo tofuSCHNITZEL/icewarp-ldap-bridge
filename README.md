@@ -35,7 +35,7 @@ first Postgres start.
 
 ### Devcontainer (optional)
 
-A VS Code devcontainer is committed at `.devcontainer/compose/devcontainer.json`.
+A VS Code devcontainer is committed at `.devcontainer/devcontainer.json`.
 It adds a `devcontainer` service to the same compose project (via
 `docker-compose.devcontainer.yaml`) and ships Go plus the Claude Code CLI, so you
 can develop the bridge inside the stack. "Reopen in Container" brings up the

@@ -6,8 +6,8 @@
   // those services by name (e.g. "keycloak") instead of localhost.
   "name": "icewarp-ldap-bridge (compose)",
   "dockerComposeFile": [
-    "../../docker-compose.yaml",
-    "../../docker-compose.devcontainer.yaml"
+    "../docker-compose.yaml",
+    "../docker-compose.devcontainer.yaml"
   ],
   "service": "devcontainer",
   "workspaceFolder": "/workspaces/icewarp-ldap-bridge",
