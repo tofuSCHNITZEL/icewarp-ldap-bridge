@@ -1,0 +1,33 @@
+{
+  // Variant 2: a Docker Compose setup in the repo. The local-dev compose file
+  // (docker-compose.yaml) provides the services the bridge integrates with
+  // (Keycloak, IceWarp, their datastores). The overlay adds a "devcontainer"
+  // service we attach to here; it joins the same compose network, so it reaches
+  // those services by name (e.g. "keycloak") instead of localhost.
+  "name": "icewarp-ldap-bridge (compose)",
+  "dockerComposeFile": [
+    "../docker-compose.yaml",
+    "../docker-compose.devcontainer.yaml"
+  ],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/icewarp-ldap-bridge",
+  // The bridge's own LDAP listener, forwarded to the host for debugging. The
+  // other services already publish their ports via docker-compose.yaml.
+  "forwardPorts": [1389],
+  "features": {
+    // Go comes from the base image; Node backs the Claude Code CLI.
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  // The claude-config volume mounts root-owned; hand it to the vscode user so
+  // Claude can write its credentials. Then pull Go deps once a module exists.
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.claude; [ -f go.mod ] && go mod download || true",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "Anthropic.claude-code"
+      ]
+    }
+  }
+}

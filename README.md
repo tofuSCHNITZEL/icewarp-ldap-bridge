@@ -33,6 +33,23 @@ Local dev stack via Docker Compose: Postgres, Keycloak, and IceWarp.
 Keycloak stores its data in the `keycloak` database, created automatically on
 first Postgres start.
 
+### Devcontainer (optional)
+
+A VS Code devcontainer is committed at `.devcontainer/devcontainer.json`.
+It adds a `devcontainer` service to the same compose project (via
+`docker-compose.devcontainer.yaml`) and ships Go plus the Claude Code CLI, so you
+can develop the bridge inside the stack. "Reopen in Container" brings up the
+other services automatically.
+
+Inside the container, reach the services by name on their **container** ports,
+not `localhost`:
+
+| Service  | From the devcontainer        | From the host         |
+| -------- | ---------------------------- | --------------------- |
+| Keycloak | `http://keycloak:8080`       | http://localhost:8080 |
+| IceWarp  | `http://icewarp:80`          | http://localhost:8081 |
+| Postgres | `postgres:5432`              | localhost:5432        |
+
 ### Keycloak realm
 
 A `dev` realm is committed at `docker/keycloak/realms/dev-realm.json` and is
