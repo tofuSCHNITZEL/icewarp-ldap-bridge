@@ -13,9 +13,12 @@ services:
       - .:/workspaces/icewarp-ldap-bridge:cached
       # Persist the Go module cache across rebuilds (GOPATH is /go in the image).
       - go-mod-cache:/go/pkg/mod
+      # Persist Claude Code's login/config so a rebuild doesn't force re-auth.
+      - claude-config:/home/vscode/.claude
     depends_on:
       - keycloak
       - icewarp
 
 volumes:
   go-mod-cache:
+  claude-config:

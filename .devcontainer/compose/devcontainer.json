@@ -19,8 +19,9 @@
     "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
   },
-  // Pull Go deps once a module exists; harmless before then.
-  "postCreateCommand": "[ -f go.mod ] && go mod download || true",
+  // The claude-config volume mounts root-owned; hand it to the vscode user so
+  // Claude can write its credentials. Then pull Go deps once a module exists.
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.claude; [ -f go.mod ] && go mod download || true",
   "customizations": {
     "vscode": {
       "extensions": [
