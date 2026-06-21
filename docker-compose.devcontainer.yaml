@@ -1,0 +1,21 @@
+# Devcontainer overlay, merged on top of docker-compose.yaml.
+#
+# It ADDS a "devcontainer" service to the existing local-dev compose setup. You
+# develop and run the Go bridge inside this container instead of on the host.
+# Because it joins the same compose project, it reaches the other services by
+# their service names — `keycloak`, `icewarp`, `postgres` — on their *container*
+# ports, not localhost. See the README "Devcontainer" note for the addresses.
+services:
+  devcontainer:
+    image: mcr.microsoft.com/devcontainers/go:1-trixie
+    command: sleep infinity
+    volumes:
+      - .:/workspaces/icewarp-ldap-bridge:cached
+      # Persist the Go module cache across rebuilds (GOPATH is /go in the image).
+      - go-mod-cache:/go/pkg/mod
+    depends_on:
+      - keycloak
+      - icewarp
+
+volumes:
+  go-mod-cache:
