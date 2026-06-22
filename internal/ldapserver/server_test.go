@@ -133,6 +133,34 @@ func TestBindEmailAsUID(t *testing.T) {
 	}
 }
 
+// TestModifyCNUpdatesFileas proves a cn (display name) modify is mapped to the
+// user's Fileas and persisted — so if IceWarp stays unchanged, the bridge did
+// not receive a changed cn value.
+func TestModifyCNUpdatesFileas(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Fileas: "John Doe", Password: "secret"})
+	addr := startServer(t, repo)
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+
+	req := ldap.NewModifyRequest("uid=johndoe,"+testBaseDN, nil)
+	req.Replace("cn", []string{"Johnny D"})
+	if err := conn.Modify(req); err != nil {
+		t.Fatalf("modify cn: %v", err)
+	}
+
+	u, err := repo.Get(context.Background(), "johndoe")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if u.Fileas != "Johnny D" {
+		t.Fatalf("cn change not persisted: Fileas=%q, want %q", u.Fileas, "Johnny D")
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {

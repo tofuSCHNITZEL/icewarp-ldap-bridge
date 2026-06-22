@@ -193,11 +193,23 @@ func (r *Repository) Update(ctx context.Context, u users.User) error {
 	set(cardTitle, u.Title)
 	// fileas is only written when non-empty so it isn't blanked when the caller
 	// doesn't carry a display name.
-	if u.Fileas != "" {
+	fileasChanged := false
+	if u.Fileas != "" && u.Fileas != card.Get(cardFileas) {
+		fileasChanged = true
 		set(cardFileas, u.Fileas)
 	}
 	if cardChanged {
 		if err := r.client.SetAccountCard(ctx, email, card); err != nil {
+			return mapRepoError(err)
+		}
+	}
+
+	// The card's fileas is the bridge's display name, but IceWarp shows u_name as
+	// the account "Display name" (the <name> in account listings and the admin
+	// UI). Create writes both; keep them in sync on update too, otherwise a
+	// display-name change lands in the card but is invisible in IceWarp.
+	if fileasChanged {
+		if err := r.client.SetAccountProperties(ctx, email, StringProperty("u_name", u.Fileas)); err != nil {
 			return mapRepoError(err)
 		}
 	}

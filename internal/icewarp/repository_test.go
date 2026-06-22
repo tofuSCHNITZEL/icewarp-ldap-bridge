@@ -374,6 +374,8 @@ func TestRepositoryUpdateDisplayNameOnly(t *testing.T) {
 	if g, s := mock.setCard.Get("firstname"), mock.setCard.Get("lastname"); g != "John" || s != "Doe" {
 		t.Errorf("structured name changed: firstname=%q lastname=%q", g, s)
 	}
+	// The display name must also reach u_name, which is what IceWarp shows.
+	assertStringProp(t, mock.setProps, "u_name", "New Name")
 }
 
 // TestRepositoryUpdateNoChange writes nothing when nothing changed.
