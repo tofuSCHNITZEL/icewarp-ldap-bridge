@@ -3,8 +3,8 @@ package icewarp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
@@ -39,16 +39,28 @@ var _ accountAPI = (*Client)(nil)
 type Repository struct {
 	client accountAPI
 	domain string
+	logger *slog.Logger
 }
 
 var _ users.Repository = (*Repository)(nil)
 
 // NewRepository returns an IceWarp-backed user repository for a mail domain.
-func NewRepository(client *Client, domain string) *Repository {
-	return &Repository{client: client, domain: domain}
+func NewRepository(client *Client, domain string, logger *slog.Logger) *Repository {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	return &Repository{client: client, domain: domain, logger: logger}
 }
 
-func (r *Repository) email(username string) string { return username + "@" + r.domain }
+// email qualifies a mailbox local part with the domain. It is idempotent: a
+// value that is already a full address (contains "@") is returned unchanged, so
+// a domain-qualified username never gets the domain appended twice.
+func (r *Repository) email(username string) string {
+	if strings.Contains(username, "@") {
+		return username
+	}
+	return username + "@" + r.domain
+}
 
 func (r *Repository) Authenticate(ctx context.Context, username, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, repoBindTimeout)
@@ -69,20 +81,19 @@ func (r *Repository) Get(ctx context.Context, username string) (users.User, erro
 	return r.fetch(ctx, username)
 }
 
+// List returns lightweight candidate users — identity and the cheap fields from
+// getaccountsinfolist (display name, disabled), but NOT the structured name,
+// which lives in each account's a_vcard card. The caller enriches only the
+// entries it actually returns (via Get), so a single-user lookup doesn't read
+// every account's card. See users.Query: the result is a hint, not exact.
 func (r *Repository) List(ctx context.Context, q users.Query) ([]users.User, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
 
-	// Exact-username lookup is a single read.
+	// A targeted username needs no enumeration: return the single candidate
+	// without a round-trip and let the caller's Get resolve existence + names.
 	if q.Username != "" {
-		u, err := r.fetch(ctx, q.Username)
-		if errors.Is(err, users.ErrNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return []users.User{u}, nil
+		return []users.User{{Username: q.Username, Email: r.email(q.Username)}}, nil
 	}
 
 	mask := "*"
@@ -101,47 +112,12 @@ func (r *Repository) List(ctx context.Context, q users.Query) ([]users.User, err
 		}
 		out = append(out, users.User{
 			Username: localPart(a.Email),
-			Fileas:   a.Name, // u_name; overridden by the card's fileas below
+			Fileas:   a.Name, // u_name display name; the card's fileas wins after enrichment
 			Email:    a.Email,
 			Disabled: a.Disabled(),
 		})
 	}
-
-	// The list response omits the structured name, so it must be read from each
-	// account's a_vcard card — one call per user (an N+1). "Sync all users"
-	// needs these names, so we can't skip them; fetch the cards concurrently
-	// (bounded) instead to keep a large sync from serializing N round-trips.
-	r.fillNames(ctx, out)
 	return out, nil
-}
-
-// listCardConcurrency bounds how many per-user card reads run at once in List.
-const listCardConcurrency = 8
-
-// fillNames populates the structured-name fields on each user from its a_vcard
-// card, concurrently. A per-user read error leaves that user's name fields
-// empty (same lenient behaviour as a single failed lookup).
-func (r *Repository) fillNames(ctx context.Context, list []users.User) {
-	sem := make(chan struct{}, listCardConcurrency)
-	var wg sync.WaitGroup
-	for i := range list {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(u *users.User) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			card, err := r.client.GetAccountCard(ctx, u.Email)
-			if err != nil {
-				return
-			}
-			cardToUser(u, card)
-			u.Fileas = cardDisplayName(card, u.Fileas)
-		}(&list[i])
-	}
-	wg.Wait()
 }
 
 func (r *Repository) Create(ctx context.Context, u users.User) error {
@@ -217,11 +193,23 @@ func (r *Repository) Update(ctx context.Context, u users.User) error {
 	set(cardTitle, u.Title)
 	// fileas is only written when non-empty so it isn't blanked when the caller
 	// doesn't carry a display name.
-	if u.Fileas != "" {
+	fileasChanged := false
+	if u.Fileas != "" && u.Fileas != card.Get(cardFileas) {
+		fileasChanged = true
 		set(cardFileas, u.Fileas)
 	}
 	if cardChanged {
 		if err := r.client.SetAccountCard(ctx, email, card); err != nil {
+			return mapRepoError(err)
+		}
+	}
+
+	// The card's fileas is the bridge's display name, but IceWarp shows u_name as
+	// the account "Display name" (the <name> in account listings and the admin
+	// UI). Create writes both; keep them in sync on update too, otherwise a
+	// display-name change lands in the card but is invisible in IceWarp.
+	if fileasChanged {
+		if err := r.client.SetAccountProperties(ctx, email, StringProperty("u_name", u.Fileas)); err != nil {
 			return mapRepoError(err)
 		}
 	}
@@ -282,6 +270,12 @@ func (r *Repository) fetch(ctx context.Context, username string) (users.User, er
 	return u, nil
 }
 
+// maxListAccounts caps how many accounts listAll will accumulate, bounding
+// memory and guarding against a server that misreports a huge total or ignores
+// the offset (which would otherwise loop forever). It is well above any
+// realistic single-domain user count; hitting it is logged and truncates.
+const maxListAccounts = 100_000
+
 func (r *Repository) listAll(ctx context.Context, mask string) ([]Account, error) {
 	const pageSize = 250
 	var all []Account
@@ -293,6 +287,11 @@ func (r *Repository) listAll(ctx context.Context, mask string) ([]Account, error
 		all = append(all, page...)
 		offset += len(page)
 		if len(page) == 0 || offset >= total {
+			return all, nil
+		}
+		if len(all) >= maxListAccounts {
+			r.logger.Warn("listAll: account cap reached, truncating result",
+				"cap", maxListAccounts, "domain", r.domain, "mask", mask, "total", total)
 			return all, nil
 		}
 	}

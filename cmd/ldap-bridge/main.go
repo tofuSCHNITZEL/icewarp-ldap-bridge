@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/icewarp"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/ldapserver"
@@ -25,6 +28,7 @@ var envVars = []struct{ name, def, desc string }{
 	{"ICEWARP_ADMIN_EMAIL", "", "service account, must be an IceWarp admin (default: admin@$ICEWARP_DOMAIN)"},
 	{"ICEWARP_ADMIN_PASSWORD", "", "service account password (required; no default — set it, e.g. via .env)"},
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
+	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
 }
@@ -39,6 +43,8 @@ func main() {
 
 	schema := ldapserver.Schema{
 		BaseUserDN: env("LDAP_USER_BASE_DN"),
+		Domain:     env("ICEWARP_DOMAIN"),
+		EmailAsUID: truthy(env("LDAP_EMAIL_AS_UID")),
 	}
 
 	srv, err := ldapserver.New(buildRepository(*useMemory, logger), schema, logger)
@@ -46,6 +52,18 @@ func main() {
 		logger.Error("create server", "err", err)
 		os.Exit(1)
 	}
+
+	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached
+	// IceWarp session are released cleanly instead of dropped on process kill.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		logger.Info("shutdown signal received, stopping")
+		if err := srv.Stop(); err != nil {
+			logger.Error("stop server", "err", err)
+		}
+	}()
 
 	logger.Info("ldap-bridge listening", "addr", *addr, "base_dn", schema.BaseUserDN)
 	if err := srv.Run(*addr); err != nil {
@@ -84,7 +102,7 @@ func buildRepository(useMemory bool, logger *slog.Logger) users.Repository {
 	}
 	client := icewarp.NewClient(endpoint, adminEmail, adminPassword, opts...)
 	logger.Info("backend: IceWarp", "url", endpoint, "domain", domain)
-	return icewarp.NewRepository(client, domain)
+	return icewarp.NewRepository(client, domain, logger)
 }
 
 // seedDev gives the in-memory backend a single admin user to bind as, so the
@@ -126,6 +144,17 @@ func introspectDir() string {
 		return "icewarp-introspect"
 	default:
 		return v
+	}
+}
+
+// truthy reports whether an env value is an enabled flag (anything other than
+// empty or an explicit falsy token).
+func truthy(v string) bool {
+	switch strings.ToLower(v) {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
 	}
 }
 

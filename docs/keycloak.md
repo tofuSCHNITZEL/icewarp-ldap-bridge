@@ -85,11 +85,20 @@ For write-back (sync to LDAP / provisioning) additionally:
 ## How this maps to the bridge
 
 The bridge is built on `gldap`, which covers bind, search, add, modify and
-delete — all the core operations above. Three gaps to be aware of:
+delete — all the core operations above. Four gaps to be aware of:
 
 - **No ModifyDN or Compare routes** in `gldap` v0.1.14, so the bridge cannot
   serve a rename. Keycloak only renames on RDN changes; configuring the RDN to
-  a stable attribute avoids it.
+  a stable attribute avoids it. If Keycloak has **"Use email as username"**
+  enabled it expects the RDN to be the email — set `LDAP_EMAIL_AS_UID` so the
+  bridge's `uid`/RDN matches and no rename is attempted.
+- **Search filters are matched on identity attributes** (`uid`, `mail`,
+  `objectClass`, `entryUUID`). The structured name lives in each account's
+  `a_vcard` card, which the bridge reads only for the entries a search actually
+  returns — not for every account on every search (so a single-user lookup
+  doesn't read the whole directory's cards). A filter on a name-only attribute
+  (`sn`, `givenName`, …) therefore won't match server-side; Keycloak filters
+  only on identity attributes, so this isn't a limitation for it.
 - **Paged results** are advertised in our Root DSE, but the server returns the
   full result set in a single response. go-ldap's `SearchWithPaging` aggregates
   and stops cleanly, so paged clients still get every entry.

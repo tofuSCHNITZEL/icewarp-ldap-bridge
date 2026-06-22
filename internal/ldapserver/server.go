@@ -45,7 +45,8 @@ func New(repo users.Repository, schema Schema, logger *slog.Logger, opts ...glda
 	}
 	s := &Server{repo: repo, schema: schema, logger: logger, authed: make(map[int]struct{})}
 
-	gs, err := gldap.NewServer(opts...)
+	allOpts := append([]gldap.Option{gldap.WithOnClose(s.removeAuthed)}, opts...)
+	gs, err := gldap.NewServer(allOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +89,12 @@ func (s *Server) markAuthed(connID int) {
 	s.authed[connID] = struct{}{}
 }
 
+func (s *Server) removeAuthed(connID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.authed, connID)
+}
+
 func (s *Server) isAuthed(connID int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,9 +110,16 @@ func (s *Server) bind(w *gldap.ResponseWriter, r *gldap.Request) {
 
 	m, err := r.GetSimpleBindMessage()
 	if err != nil {
+		s.logger.Debug("ldap bind: malformed request", "conn", r.ConnectionID(), "err", err)
+		resp.SetResultCode(gldap.ResultProtocolError)
 		return
 	}
 	s.logger.Debug("ldap bind", "dn", m.UserName, "conn", r.ConnectionID())
+	// An empty password is an unauthenticated bind (RFC 4513 §5.1.2): it must
+	// never authenticate, so reject it here rather than relying on the backend.
+	if len(m.Password) == 0 {
+		return
+	}
 	username, ok := s.schema.usernameFromDN(m.UserName)
 	if !ok {
 		return
@@ -139,20 +153,34 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 
-	list, err := s.repo.List(context.Background(), queryFromFilter(m.Filter))
+	list, err := s.repo.List(context.Background(), s.schema.queryFromFilter(m.Filter))
 	if err != nil {
 		resp.SetResultCode(resultCode(err))
 		return
 	}
 
+	// Prefilter on the cheap identity attributes (uid, mail, objectClass,
+	// entryUUID) so we only enrich entries we might return. List omits the
+	// structured name — it lives behind a per-user backend read — so a filter on
+	// a name-only attribute (sn, givenName, …) won't match here; Keycloak filters
+	// only on identity attributes, so that's not a limitation in practice.
 	base := normalizeDN(m.BaseDN)
+	var candidates []users.User
 	for _, u := range list {
+		if inScope(normalizeDN(s.schema.userDN(u.Username)), base, int64(m.Scope)) &&
+			matchFilter(m.Filter, s.schema.attrs(u)) {
+			candidates = append(candidates, u)
+		}
+	}
+
+	// Enrich the survivors (names) and emit those that still match once their
+	// full attributes are known.
+	for _, u := range s.enrich(context.Background(), candidates) {
 		attrs := s.schema.attrs(u)
-		dn := s.schema.userDN(u.Username)
-		if !inScope(normalizeDN(dn), base, int64(m.Scope)) || !matchFilter(m.Filter, attrs) {
+		if !matchFilter(m.Filter, attrs) {
 			continue
 		}
-		_ = w.Write(r.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		_ = w.Write(r.NewSearchResponseEntry(s.schema.userDN(u.Username), gldap.WithAttributes(attrs)))
 	}
 
 	// We return everything in one response, so when the client used the paged
@@ -164,6 +192,43 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		}
 	}
 	resp.SetResultCode(gldap.ResultSuccess)
+}
+
+// enrichConcurrency bounds how many per-user backend reads run at once in enrich.
+const enrichConcurrency = 8
+
+// enrich loads the full record (structured name, etc.) for each candidate via
+// repo.Get, concurrently and bounded. A candidate that no longer exists is
+// dropped silently; any other read error drops it with a warning. Order is not
+// preserved (LDAP search results are unordered).
+func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.User {
+	sem := make(chan struct{}, enrichConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	out := make([]users.User, 0, len(candidates))
+	for _, c := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(username string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			u, err := s.repo.Get(ctx, username)
+			if err != nil {
+				if !errors.Is(err, users.ErrNotFound) {
+					s.logger.Warn("ldap search: enrich failed, entry skipped", "username", username, "err", err)
+				}
+				return
+			}
+			mu.Lock()
+			out = append(out, u)
+			mu.Unlock()
+		}(c.Username)
+	}
+	wg.Wait()
+	return out
 }
 
 func requestedPaging(controls []gldap.Control) bool {
@@ -241,7 +306,10 @@ func (s *Server) modify(w *gldap.ResponseWriter, r *gldap.Request) {
 		val := first(unwrapVals(c.Modification.Vals))
 		switch strings.ToLower(c.Modification.Type) {
 		case "userpassword":
-			if c.Operation != gldap.DeleteAttribute {
+			// Only a replace/add with a non-empty value sets a password. An empty
+			// value is skipped, not written: the bridge can't represent "no
+			// password" and a blank password must not slip through to IceWarp.
+			if c.Operation != gldap.DeleteAttribute && val != "" {
 				newPassword = &val
 			}
 		case "cn":

@@ -95,8 +95,11 @@ func NewClient(endpoint, email, password string, opts ...Option) *Client {
 		endpoint: endpoint,
 		email:    email,
 		password: password,
-		http:     &http.Client{},
-		logger:   slog.New(slog.DiscardHandler),
+		// Timeout is longer than the largest repo-level context timeout (repoBindTimeout=90s)
+		// so the context always fires first; this is defense-in-depth for callers that
+		// forget a deadline.
+		http:   &http.Client{Timeout: 120 * time.Second},
+		logger: slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -135,7 +138,7 @@ func (c *Client) call(ctx context.Context, sid, command string, params, result a
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MiB hard cap
 	if err != nil {
 		c.logger.Debug("icewarp call", "command", command, "status", resp.StatusCode, "dur", time.Since(start), "err", err)
 		return "", fmt.Errorf("icewarp: read %s response: %w", command, err)
