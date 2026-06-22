@@ -201,7 +201,6 @@ func TestRepositoryListPrefix(t *testing.T) {
 			{Name: "Front Desk", Email: "desk@icewarp.local", AccountType: 7}, // not a user
 		},
 		listTotal: 2,
-		getCard:   makeCard("firstname", "John", "lastname", "Doe"),
 	}
 
 	list, err := newRepo(mock).List(context.Background(), users.Query{UsernamePrefix: "j"})
@@ -211,20 +210,25 @@ func TestRepositoryListPrefix(t *testing.T) {
 	if mock.listMask != "j*" {
 		t.Errorf("namemask pushdown: got %q, want %q", mock.listMask, "j*")
 	}
-	if len(list) != 1 || list[0].Username != "jdoe" || list[0].Firstname != "John" || list[0].Lastname != "Doe" {
+	// List returns lightweight candidates (no card read); only the public folder
+	// (accounttype 7) is filtered out.
+	if len(list) != 1 || list[0].Username != "jdoe" || list[0].Email != "jdoe@icewarp.local" {
 		t.Fatalf("list: unexpected %+v", list)
 	}
 }
 
-func TestRepositoryListFillsNamesForAllUsers(t *testing.T) {
+// TestRepositoryListIsLightweight pins the call-volume fix: enumerating users
+// reads no per-account card (that enrichment is the caller's job, per match), so
+// a single getaccountsinfolist serves the whole list.
+func TestRepositoryListIsLightweight(t *testing.T) {
 	mock := &mockClient{
 		listAccounts: []Account{
 			{Name: "A", Email: "a@icewarp.local", AccountType: 0},
 			{Name: "B", Email: "b@icewarp.local", AccountType: 0},
 			{Name: "C", Email: "c@icewarp.local", AccountType: 0},
 		},
-		listTotal: 3,
-		getCard:   makeCard("firstname", "John", "lastname", "Doe", "fileas", "John Doe"),
+		listTotal:  3,
+		getCardErr: errors.New("card must not be read during List"),
 	}
 
 	list, err := newRepo(mock).List(context.Background(), users.Query{})
@@ -234,29 +238,25 @@ func TestRepositoryListFillsNamesForAllUsers(t *testing.T) {
 	if len(list) != 3 {
 		t.Fatalf("got %d users, want 3", len(list))
 	}
-	// Every user must have its name filled from the card (concurrent fan-out).
 	for _, u := range list {
-		if u.Firstname != "John" || u.Lastname != "Doe" || u.Fileas != "John Doe" {
-			t.Errorf("user %s: names not filled: %+v", u.Username, u)
+		if u.Firstname != "" || u.Lastname != "" {
+			t.Errorf("user %s: List should not fill structured name: %+v", u.Username, u)
 		}
 	}
 }
 
-func TestRepositoryListExactUsesGet(t *testing.T) {
-	mock := &mockClient{
-		getProps: Properties{
-			"a_vcard": {Card: makeCard("firstname", "John", "lastname", "Doe")},
-			"u_name":  {Val: "John Doe"},
-		},
-	}
+func TestRepositoryListExactNoEnumeration(t *testing.T) {
+	mock := &mockClient{getCardErr: errors.New("no read expected")}
 	list, err := newRepo(mock).List(context.Background(), users.Query{Username: "jdoe"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
+	// A targeted username resolves to a single candidate with no backend call
+	// (neither ListAccounts nor a property read); the caller's Get enriches it.
 	if mock.listMask != "" {
 		t.Errorf("exact lookup should not call ListAccounts (mask=%q)", mock.listMask)
 	}
-	if len(list) != 1 || list[0].Username != "jdoe" {
+	if len(list) != 1 || list[0].Username != "jdoe" || list[0].Email != "jdoe@icewarp.local" {
 		t.Fatalf("list exact: unexpected %+v", list)
 	}
 }

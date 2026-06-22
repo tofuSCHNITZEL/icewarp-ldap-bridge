@@ -1,7 +1,9 @@
 package ldapserver
 
 import (
+	"context"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,5 +130,66 @@ func TestBindEmailAsUID(t *testing.T) {
 
 	if err := dial(t, addr).Bind("uid=johndoe@icewarp.local,"+testBaseDN, "secret"); err != nil {
 		t.Fatalf("email-as-uid bind failed: %v", err)
+	}
+}
+
+// countingRepo returns a fixed lightweight list and counts per-user Get calls,
+// so a test can assert how many entries the search handler enriches.
+type countingRepo struct {
+	users.Repository // unused methods (Create/Update/…) panic if called
+	list             []users.User
+	gets             int32
+}
+
+func (c *countingRepo) Authenticate(_ context.Context, _, password string) error {
+	if password != "secret" {
+		return users.ErrInvalidCredentials
+	}
+	return nil
+}
+
+func (c *countingRepo) List(_ context.Context, _ users.Query) ([]users.User, error) {
+	return c.list, nil
+}
+
+func (c *countingRepo) Get(_ context.Context, username string) (users.User, error) {
+	atomic.AddInt32(&c.gets, 1)
+	for _, u := range c.list {
+		if u.Username == username {
+			return u, nil
+		}
+	}
+	return users.User{}, users.ErrNotFound
+}
+
+// TestSearchEnrichesOnlyMatches is the call-volume regression: an entryUUID
+// search across many users must enrich (Get) only the single match, not the
+// whole directory.
+func TestSearchEnrichesOnlyMatches(t *testing.T) {
+	repo := &countingRepo{}
+	for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank"} {
+		repo.list = append(repo.list, users.User{Username: name, Email: name + "@icewarp.local"})
+	}
+	addr := startServer(t, repo)
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=alice,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+
+	target := stableUUID("carol")
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(entryUUID=" + target + ")",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "carol" {
+		t.Fatalf("search returned %d entries, want just carol", len(res.Entries))
+	}
+	if got := atomic.LoadInt32(&repo.gets); got != 1 {
+		t.Fatalf("enriched %d users for a single-match search, want 1", got)
 	}
 }

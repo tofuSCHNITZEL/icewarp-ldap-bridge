@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
@@ -82,20 +81,19 @@ func (r *Repository) Get(ctx context.Context, username string) (users.User, erro
 	return r.fetch(ctx, username)
 }
 
+// List returns lightweight candidate users — identity and the cheap fields from
+// getaccountsinfolist (display name, disabled), but NOT the structured name,
+// which lives in each account's a_vcard card. The caller enriches only the
+// entries it actually returns (via Get), so a single-user lookup doesn't read
+// every account's card. See users.Query: the result is a hint, not exact.
 func (r *Repository) List(ctx context.Context, q users.Query) ([]users.User, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
 
-	// Exact-username lookup is a single read.
+	// A targeted username needs no enumeration: return the single candidate
+	// without a round-trip and let the caller's Get resolve existence + names.
 	if q.Username != "" {
-		u, err := r.fetch(ctx, q.Username)
-		if errors.Is(err, users.ErrNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return []users.User{u}, nil
+		return []users.User{{Username: q.Username, Email: r.email(q.Username)}}, nil
 	}
 
 	mask := "*"
@@ -114,48 +112,12 @@ func (r *Repository) List(ctx context.Context, q users.Query) ([]users.User, err
 		}
 		out = append(out, users.User{
 			Username: localPart(a.Email),
-			Fileas:   a.Name, // u_name; overridden by the card's fileas below
+			Fileas:   a.Name, // u_name display name; the card's fileas wins after enrichment
 			Email:    a.Email,
 			Disabled: a.Disabled(),
 		})
 	}
-
-	// The list response omits the structured name, so it must be read from each
-	// account's a_vcard card — one call per user (an N+1). "Sync all users"
-	// needs these names, so we can't skip them; fetch the cards concurrently
-	// (bounded) instead to keep a large sync from serializing N round-trips.
-	r.fillNames(ctx, out)
 	return out, nil
-}
-
-// listCardConcurrency bounds how many per-user card reads run at once in List.
-const listCardConcurrency = 8
-
-// fillNames populates the structured-name fields on each user from its a_vcard
-// card, concurrently. A per-user read error leaves that user's name fields
-// empty (same lenient behaviour as a single failed lookup).
-func (r *Repository) fillNames(ctx context.Context, list []users.User) {
-	sem := make(chan struct{}, listCardConcurrency)
-	var wg sync.WaitGroup
-	for i := range list {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(u *users.User) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			card, err := r.client.GetAccountCard(ctx, u.Email)
-			if err != nil {
-				r.logger.Warn("fillNames: card read failed, name fields will be empty", "email", u.Email, "err", err)
-				return
-			}
-			cardToUser(u, card)
-			u.Fileas = cardDisplayName(card, u.Fileas)
-		}(&list[i])
-	}
-	wg.Wait()
 }
 
 func (r *Repository) Create(ctx context.Context, u users.User) error {

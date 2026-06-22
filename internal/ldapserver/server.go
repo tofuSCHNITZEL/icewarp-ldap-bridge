@@ -159,14 +159,28 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 
+	// Prefilter on the cheap identity attributes (uid, mail, objectClass,
+	// entryUUID) so we only enrich entries we might return. List omits the
+	// structured name — it lives behind a per-user backend read — so a filter on
+	// a name-only attribute (sn, givenName, …) won't match here; Keycloak filters
+	// only on identity attributes, so that's not a limitation in practice.
 	base := normalizeDN(m.BaseDN)
+	var candidates []users.User
 	for _, u := range list {
+		if inScope(normalizeDN(s.schema.userDN(u.Username)), base, int64(m.Scope)) &&
+			matchFilter(m.Filter, s.schema.attrs(u)) {
+			candidates = append(candidates, u)
+		}
+	}
+
+	// Enrich the survivors (names) and emit those that still match once their
+	// full attributes are known.
+	for _, u := range s.enrich(context.Background(), candidates) {
 		attrs := s.schema.attrs(u)
-		dn := s.schema.userDN(u.Username)
-		if !inScope(normalizeDN(dn), base, int64(m.Scope)) || !matchFilter(m.Filter, attrs) {
+		if !matchFilter(m.Filter, attrs) {
 			continue
 		}
-		_ = w.Write(r.NewSearchResponseEntry(dn, gldap.WithAttributes(attrs)))
+		_ = w.Write(r.NewSearchResponseEntry(s.schema.userDN(u.Username), gldap.WithAttributes(attrs)))
 	}
 
 	// We return everything in one response, so when the client used the paged
@@ -178,6 +192,43 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		}
 	}
 	resp.SetResultCode(gldap.ResultSuccess)
+}
+
+// enrichConcurrency bounds how many per-user backend reads run at once in enrich.
+const enrichConcurrency = 8
+
+// enrich loads the full record (structured name, etc.) for each candidate via
+// repo.Get, concurrently and bounded. A candidate that no longer exists is
+// dropped silently; any other read error drops it with a warning. Order is not
+// preserved (LDAP search results are unordered).
+func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.User {
+	sem := make(chan struct{}, enrichConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	out := make([]users.User, 0, len(candidates))
+	for _, c := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(username string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			u, err := s.repo.Get(ctx, username)
+			if err != nil {
+				if !errors.Is(err, users.ErrNotFound) {
+					s.logger.Warn("ldap search: enrich failed, entry skipped", "username", username, "err", err)
+				}
+				return
+			}
+			mu.Lock()
+			out = append(out, u)
+			mu.Unlock()
+		}(c.Username)
+	}
+	wg.Wait()
+	return out
 }
 
 func requestedPaging(controls []gldap.Control) bool {
