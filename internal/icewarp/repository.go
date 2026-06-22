@@ -288,6 +288,12 @@ func (r *Repository) fetch(ctx context.Context, username string) (users.User, er
 	return u, nil
 }
 
+// maxListAccounts caps how many accounts listAll will accumulate, bounding
+// memory and guarding against a server that misreports a huge total or ignores
+// the offset (which would otherwise loop forever). It is well above any
+// realistic single-domain user count; hitting it is logged and truncates.
+const maxListAccounts = 100_000
+
 func (r *Repository) listAll(ctx context.Context, mask string) ([]Account, error) {
 	const pageSize = 250
 	var all []Account
@@ -299,6 +305,11 @@ func (r *Repository) listAll(ctx context.Context, mask string) ([]Account, error
 		all = append(all, page...)
 		offset += len(page)
 		if len(page) == 0 || offset >= total {
+			return all, nil
+		}
+		if len(all) >= maxListAccounts {
+			r.logger.Warn("listAll: account cap reached, truncating result",
+				"cap", maxListAccounts, "domain", r.domain, "mask", mask, "total", total)
 			return all, nil
 		}
 	}
