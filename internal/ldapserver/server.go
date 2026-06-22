@@ -45,7 +45,8 @@ func New(repo users.Repository, schema Schema, logger *slog.Logger, opts ...glda
 	}
 	s := &Server{repo: repo, schema: schema, logger: logger, authed: make(map[int]struct{})}
 
-	gs, err := gldap.NewServer(opts...)
+	allOpts := append([]gldap.Option{gldap.WithOnClose(s.removeAuthed)}, opts...)
+	gs, err := gldap.NewServer(allOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +89,12 @@ func (s *Server) markAuthed(connID int) {
 	s.authed[connID] = struct{}{}
 }
 
+func (s *Server) removeAuthed(connID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.authed, connID)
+}
+
 func (s *Server) isAuthed(connID int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,6 +110,8 @@ func (s *Server) bind(w *gldap.ResponseWriter, r *gldap.Request) {
 
 	m, err := r.GetSimpleBindMessage()
 	if err != nil {
+		s.logger.Debug("ldap bind: malformed request", "conn", r.ConnectionID(), "err", err)
+		resp.SetResultCode(gldap.ResultProtocolError)
 		return
 	}
 	s.logger.Debug("ldap bind", "dn", m.UserName, "conn", r.ConnectionID())

@@ -3,6 +3,7 @@ package icewarp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
@@ -94,7 +95,7 @@ func (m *mockClient) DeleteAccounts(_ context.Context, domain string, emails ...
 }
 
 func newRepo(client accountAPI) *Repository {
-	return &Repository{client: client, domain: "icewarp.local"}
+	return &Repository{client: client, domain: "icewarp.local", logger: slog.New(slog.DiscardHandler)}
 }
 
 func TestRepositoryCreate(t *testing.T) {

@@ -3,6 +3,7 @@ package icewarp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -39,13 +40,17 @@ var _ accountAPI = (*Client)(nil)
 type Repository struct {
 	client accountAPI
 	domain string
+	logger *slog.Logger
 }
 
 var _ users.Repository = (*Repository)(nil)
 
 // NewRepository returns an IceWarp-backed user repository for a mail domain.
-func NewRepository(client *Client, domain string) *Repository {
-	return &Repository{client: client, domain: domain}
+func NewRepository(client *Client, domain string, logger *slog.Logger) *Repository {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	return &Repository{client: client, domain: domain, logger: logger}
 }
 
 func (r *Repository) email(username string) string { return username + "@" + r.domain }
@@ -135,6 +140,7 @@ func (r *Repository) fillNames(ctx context.Context, list []users.User) {
 			defer func() { <-sem }()
 			card, err := r.client.GetAccountCard(ctx, u.Email)
 			if err != nil {
+				r.logger.Warn("fillNames: card read failed, name fields will be empty", "email", u.Email, "err", err)
 				return
 			}
 			cardToUser(u, card)

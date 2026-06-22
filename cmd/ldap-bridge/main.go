@@ -84,7 +84,7 @@ func buildRepository(useMemory bool, logger *slog.Logger) users.Repository {
 	}
 	client := icewarp.NewClient(endpoint, adminEmail, adminPassword, opts...)
 	logger.Info("backend: IceWarp", "url", endpoint, "domain", domain)
-	return icewarp.NewRepository(client, domain)
+	return icewarp.NewRepository(client, domain, logger)
 }
 
 // seedDev gives the in-memory backend a single admin user to bind as, so the

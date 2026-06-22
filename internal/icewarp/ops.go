@@ -11,6 +11,12 @@ import (
 // validate credentials up front. The bad-credentials failure is tarpitted
 // (~25-30s), so give the context ample timeout.
 func (c *Client) Authenticate(ctx context.Context) error {
+	// Clear the cached sid first so a failed re-auth doesn't leave a stale
+	// invalid session that session() would return on the next call.
+	c.mu.Lock()
+	c.sid = ""
+	c.mu.Unlock()
+
 	var res resultScalar
 	sid, err := c.call(ctx, "", "authenticate", authParams{
 		AuthType: 0,
