@@ -115,6 +115,11 @@ func (s *Server) bind(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 	s.logger.Debug("ldap bind", "dn", m.UserName, "conn", r.ConnectionID())
+	// An empty password is an unauthenticated bind (RFC 4513 §5.1.2): it must
+	// never authenticate, so reject it here rather than relying on the backend.
+	if len(m.Password) == 0 {
+		return
+	}
 	username, ok := s.schema.usernameFromDN(m.UserName)
 	if !ok {
 		return
