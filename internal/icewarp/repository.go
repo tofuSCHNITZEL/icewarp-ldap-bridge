@@ -53,7 +53,15 @@ func NewRepository(client *Client, domain string, logger *slog.Logger) *Reposito
 	return &Repository{client: client, domain: domain, logger: logger}
 }
 
-func (r *Repository) email(username string) string { return username + "@" + r.domain }
+// email qualifies a mailbox local part with the domain. It is idempotent: a
+// value that is already a full address (contains "@") is returned unchanged, so
+// a domain-qualified username never gets the domain appended twice.
+func (r *Repository) email(username string) string {
+	if strings.Contains(username, "@") {
+		return username
+	}
+	return username + "@" + r.domain
+}
 
 func (r *Repository) Authenticate(ctx context.Context, username, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, repoBindTimeout)

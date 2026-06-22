@@ -442,6 +442,19 @@ func TestListAllCap(t *testing.T) {
 	}
 }
 
+// TestRepositoryEmailIdempotent: a username that is already a full address is
+// not re-qualified (the double-domain regression: johndoe@icewarp.local must not
+// become johndoe@icewarp.local@icewarp.local).
+func TestRepositoryEmailIdempotent(t *testing.T) {
+	r := newRepo(&mockClient{})
+	if got := r.email("jdoe"); got != "jdoe@icewarp.local" {
+		t.Errorf("bare local part: got %q", got)
+	}
+	if got := r.email("jdoe@icewarp.local"); got != "jdoe@icewarp.local" {
+		t.Errorf("already-qualified: got %q, want it unchanged", got)
+	}
+}
+
 func TestRepositoryDelete(t *testing.T) {
 	mock := &mockClient{}
 	if err := newRepo(mock).Delete(context.Background(), "jdoe"); err != nil {
