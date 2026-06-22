@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/icewarp"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/ldapserver"
@@ -46,6 +49,18 @@ func main() {
 		logger.Error("create server", "err", err)
 		os.Exit(1)
 	}
+
+	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached
+	// IceWarp session are released cleanly instead of dropped on process kill.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		logger.Info("shutdown signal received, stopping")
+		if err := srv.Stop(); err != nil {
+			logger.Error("stop server", "err", err)
+		}
+	}()
 
 	logger.Info("ldap-bridge listening", "addr", *addr, "base_dn", schema.BaseUserDN)
 	if err := srv.Run(*addr); err != nil {
