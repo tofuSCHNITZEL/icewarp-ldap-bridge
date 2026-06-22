@@ -119,21 +119,23 @@ want; the rest are ignored.
 
 ### Groups
 
-The bridge can serve IceWarp groups (accounttype 7) read-only, sourced from the
-per-user `u_groups` property and the per-group member list. Two independent
-forms, both **read-only** (configure the Keycloak mappers as read-only — a
-writable group mapper would silently no-op, same as the read-only user-attribute
-gotcha):
+The bridge serves IceWarp groups (accounttype 7) read-only as LDAP entries
+(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`), sourced from the
+per-group member list and the per-user `u_groups` property. Groups become entries
+(`cn=<group>,<base>`, `groupOfNames`, `member` = user DNs) and users gain
+`memberOf` (group DNs). Point a Keycloak *Group LDAP Mapper* at the base DN to
+import real Keycloak groups; for a plain group claim, add a *Group Membership*
+protocol mapper on top.
 
-- **Claim attribute** (`LDAP_GROUP_ATTRIBUTE`, default `departmentNumber`): a
-  multi-valued user attribute of group local parts. Use a *User Attribute LDAP
-  mapper* + a claim mapper. Cheapest — no group tree, no extra calls.
-- **Group entries + `memberOf`** (`LDAP_GROUP_BASE_DN`, default
-  `ou=groups,dc=icewarp,dc=local`): groups become LDAP entries
-  (`cn=<group>,<base>`, `groupOfNames`, `member` = user DNs) and users gain
-  `memberOf`. Point a Keycloak *Group LDAP Mapper* at the base DN (Membership
-  attribute `member`, or the `memberOf` strategy) to import real Keycloak groups.
-  Note empty groups are emitted without a `member` attribute (`groupOfNames`
+- **Membership resolution** — the mapper's *User Groups Retrieve Strategy* picks
+  the source: `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` (default) searches groups for
+  `member=<userDN>`; `GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE` reads the user's
+  `memberOf` (set *Member-Of LDAP Attribute* = `memberOf`). Either works. A
+  user's group membership is resolved at **sync/login**, not on admin detail
+  view, so trigger a user sync after wiring the mapper.
+- **Read-only** — configure the mapper read-only; a writable group mapper would
+  silently no-op (same as the read-only user-attribute gotcha).
+- **Empty groups** are emitted without a `member` attribute (`groupOfNames`
   formally requires one); enable "Ignore Missing Groups" if that matters.
 
 The e2e suite in `test/e2e/` exercises the core operations against both a real

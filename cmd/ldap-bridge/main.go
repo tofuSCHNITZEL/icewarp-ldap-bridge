@@ -29,7 +29,6 @@ var envVars = []struct{ name, def, desc string }{
 	{"ICEWARP_ADMIN_PASSWORD", "", "service account password (required; no default — set it, e.g. via .env)"},
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
 	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
-	{"LDAP_GROUP_ATTRIBUTE", "departmentNumber", "multi-valued attribute carrying a user's group memberships (map to a claim in Keycloak); empty disables it"},
 	{"LDAP_GROUP_BASE_DN", "ou=groups,dc=icewarp,dc=local", "serve groups as LDAP entries under this DN and add memberOf to users (Keycloak Group mapper); empty disables it"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
@@ -44,11 +43,10 @@ func main() {
 	logger := newLogger(env("LOG_LEVEL"))
 
 	schema := ldapserver.Schema{
-		BaseUserDN:     env("LDAP_USER_BASE_DN"),
-		Domain:         env("ICEWARP_DOMAIN"),
-		EmailAsUID:     truthy(env("LDAP_EMAIL_AS_UID")),
-		GroupAttribute: optionalEnv("LDAP_GROUP_ATTRIBUTE"),
-		GroupBaseDN:    optionalEnv("LDAP_GROUP_BASE_DN"),
+		BaseUserDN:  env("LDAP_USER_BASE_DN"),
+		Domain:      env("ICEWARP_DOMAIN"),
+		EmailAsUID:  truthy(env("LDAP_EMAIL_AS_UID")),
+		GroupBaseDN: optionalEnv("LDAP_GROUP_BASE_DN"),
 	}
 
 	srv, err := ldapserver.New(buildRepository(*useMemory, logger), schema, logger)
@@ -177,8 +175,8 @@ func env(name string) string {
 }
 
 // optionalEnv is like env but honors an explicit empty value as "disabled"
-// rather than falling back to the default — for optional features (group
-// attribute / base DN) that a deployment may want to turn off.
+// rather than falling back to the default — for optional features (e.g. the
+// group base DN) that a deployment may want to turn off.
 func optionalEnv(name string) string {
 	if v, ok := os.LookupEnv(name); ok {
 		return v

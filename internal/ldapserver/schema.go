@@ -28,11 +28,6 @@ type Schema struct {
 	// When false (default) the uid is the bare mailbox local part.
 	EmailAsUID bool
 
-	// GroupAttribute, when non-empty, is the (multi-valued) LDAP attribute the
-	// user's group memberships are exposed under, e.g. "departmentNumber". Map it
-	// to a token claim with a Keycloak User Attribute mapper. Empty disables it.
-	GroupAttribute string
-
 	// GroupBaseDN, when non-empty, enables serving groups as LDAP entries
 	// ("cn=<group>,<GroupBaseDN>", objectClass groupOfNames) and adds a "memberOf"
 	// attribute (the group DNs) to user entries. Point a Keycloak Group LDAP
@@ -166,11 +161,6 @@ func (s Schema) attrs(u users.User) map[string][]string {
 	}
 	if u.Email != "" {
 		a["mail"] = []string{u.Email}
-	}
-	// Group memberships, exposed under the configured (multi-valued) attribute
-	// for a Keycloak claim mapper. Read-only; emitted only when both are present.
-	if s.GroupAttribute != "" && len(u.Groups) > 0 {
-		a[strings.ToLower(s.GroupAttribute)] = u.Groups
 	}
 	// memberOf carries the group DNs when group entries are served, for a Keycloak
 	// Group LDAP mapper (memberOf strategy). Read-only.
