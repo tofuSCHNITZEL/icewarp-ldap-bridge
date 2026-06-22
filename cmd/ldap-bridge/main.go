@@ -28,6 +28,7 @@ var envVars = []struct{ name, def, desc string }{
 	{"ICEWARP_ADMIN_EMAIL", "", "service account, must be an IceWarp admin (default: admin@$ICEWARP_DOMAIN)"},
 	{"ICEWARP_ADMIN_PASSWORD", "", "service account password (required; no default — set it, e.g. via .env)"},
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
+	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
 }
@@ -42,6 +43,8 @@ func main() {
 
 	schema := ldapserver.Schema{
 		BaseUserDN: env("LDAP_USER_BASE_DN"),
+		Domain:     env("ICEWARP_DOMAIN"),
+		EmailAsUID: truthy(env("LDAP_EMAIL_AS_UID")),
 	}
 
 	srv, err := ldapserver.New(buildRepository(*useMemory, logger), schema, logger)
@@ -141,6 +144,17 @@ func introspectDir() string {
 		return "icewarp-introspect"
 	default:
 		return v
+	}
+}
+
+// truthy reports whether an env value is an enabled flag (anything other than
+// empty or an explicit falsy token).
+func truthy(v string) bool {
+	switch strings.ToLower(v) {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
 	}
 }
 

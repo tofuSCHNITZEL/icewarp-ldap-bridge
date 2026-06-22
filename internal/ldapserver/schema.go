@@ -15,16 +15,38 @@ type Schema struct {
 	// "ou=people,dc=icewarp,dc=local". A user "jdoe" becomes
 	// "uid=jdoe,<BaseUserDN>".
 	BaseUserDN string
+
+	// Domain is the mail domain accounts live in (e.g. "icewarp.local"). It is
+	// only needed to build/parse the uid when EmailAsUID is set.
+	Domain string
+
+	// EmailAsUID exposes the account's primary email as the uid (and thus the
+	// RDN): "jdoe" becomes "uid=jdoe@icewarp.local,<BaseUserDN>". Set this to
+	// match a Keycloak federation whose username/RDN attribute resolves to the
+	// email (Keycloak's "Use email as username"); otherwise Keycloak's computed
+	// RDN won't match the entry DN and it issues a rename the bridge can't serve.
+	// When false (default) the uid is the bare mailbox local part.
+	EmailAsUID bool
 }
 
 // userObjectClasses is the objectClass set every presented user carries.
 var userObjectClasses = []string{"top", "person", "organizationalPerson", "inetOrgPerson"}
 
 func (s Schema) userDN(username string) string {
-	return "uid=" + username + "," + s.BaseUserDN
+	return "uid=" + s.uidValue(username) + "," + s.BaseUserDN
 }
 
-// usernameFromDN extracts the uid value from a DN directly under BaseUserDN.
+// uidValue is the uid (and RDN) value presented for a mailbox local part: the
+// primary email when EmailAsUID is set, otherwise the bare local part.
+func (s Schema) uidValue(username string) string {
+	if s.EmailAsUID {
+		return username + "@" + s.Domain
+	}
+	return username
+}
+
+// usernameFromDN extracts the mailbox local part from the uid of a DN directly
+// under BaseUserDN, undoing uidValue (stripping the domain when EmailAsUID).
 func (s Schema) usernameFromDN(dn string) (string, bool) {
 	norm := normalizeDN(dn)
 	suffix := "," + normalizeDN(s.BaseUserDN)
@@ -36,14 +58,29 @@ func (s Schema) usernameFromDN(dn string) (string, bool) {
 	if !ok || attr != "uid" || val == "" || strings.Contains(val, ",") {
 		return "", false
 	}
-	return val, true
+	return s.localPartFromUID(val)
+}
+
+// localPartFromUID reduces a uid value to the mailbox local part. A bare local
+// part is taken as-is; a domain-qualified uid must carry our Domain (a foreign
+// domain is rejected), so a stray "@domain" never doubles up downstream.
+func (s Schema) localPartFromUID(uid string) (string, bool) {
+	at := strings.LastIndex(uid, "@")
+	if at < 0 {
+		return uid, true
+	}
+	local, dom := uid[:at], uid[at+1:]
+	if local == "" || !strings.EqualFold(dom, s.Domain) {
+		return "", false
+	}
+	return local, true
 }
 
 // attrs builds the LDAP attribute map for a user (lower-cased keys).
 func (s Schema) attrs(u users.User) map[string][]string {
 	a := map[string][]string{
 		"objectclass": userObjectClasses,
-		"uid":         {u.Username},
+		"uid":         {s.uidValue(u.Username)},
 		// A real directory exposes a stable unique id; clients (Keycloak) use it
 		// as the federation link, so it must not change across restarts.
 		"entryuuid": {stableUUID(u.Username)},
@@ -98,8 +135,11 @@ func userFromAttrs(username string, attrs map[string][]string) users.User {
 
 // queryFromFilter extracts a best-effort username pushdown hint from an LDAP
 // filter. It is only a hint: the full filter is still applied to results, so an
-// over-broad hint is safe and a missed one only costs efficiency.
-func queryFromFilter(filter string) users.Query {
+// over-broad hint is safe and a missed one only costs efficiency. A uid value is
+// reduced to the mailbox local part (stripping our domain), so a domain-qualified
+// uid — always so under EmailAsUID — resolves to the right account instead of
+// having the domain appended a second time.
+func (s Schema) queryFromFilter(filter string) users.Query {
 	const key = "(uid="
 	i := strings.Index(strings.ToLower(filter), key)
 	if i < 0 {
@@ -117,7 +157,10 @@ func queryFromFilter(filter string) users.Query {
 	case strings.HasSuffix(val, "*") && !strings.Contains(val[:len(val)-1], "*"):
 		return users.Query{UsernamePrefix: val[:len(val)-1]}
 	case !strings.Contains(val, "*"):
-		return users.Query{Username: val}
+		if local, ok := s.localPartFromUID(val); ok {
+			return users.Query{Username: local}
+		}
+		return users.Query{}
 	default:
 		return users.Query{}
 	}

@@ -15,8 +15,13 @@ const testBaseDN = "ou=people,dc=icewarp,dc=local"
 // startServer runs a Server backed by repo on a free local port and returns its
 // address. The server is stopped on test cleanup.
 func startServer(t *testing.T, repo users.Repository) string {
+	return startServerSchema(t, repo, Schema{BaseUserDN: testBaseDN})
+}
+
+// startServerSchema is startServer with an explicit Schema (e.g. EmailAsUID).
+func startServerSchema(t *testing.T, repo users.Repository, schema Schema) string {
 	t.Helper()
-	srv, err := New(repo, Schema{BaseUserDN: testBaseDN}, nil)
+	srv, err := New(repo, schema, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -111,5 +116,17 @@ func TestBindWrongPasswordRejected(t *testing.T) {
 
 	if err := dial(t, addr).Bind("uid=admin,"+testBaseDN, "wrong"); err == nil {
 		t.Fatal("bind with wrong password succeeded, want rejection")
+	}
+}
+
+// TestBindEmailAsUID: with EmailAsUID the bind DN carries the full email, which
+// the server maps back to the mailbox local part before authenticating.
+func TestBindEmailAsUID(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	addr := startServerSchema(t, repo, Schema{BaseUserDN: testBaseDN, Domain: "icewarp.local", EmailAsUID: true})
+
+	if err := dial(t, addr).Bind("uid=johndoe@icewarp.local,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("email-as-uid bind failed: %v", err)
 	}
 }

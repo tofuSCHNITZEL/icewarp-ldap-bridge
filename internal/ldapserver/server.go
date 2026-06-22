@@ -153,7 +153,7 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 
-	list, err := s.repo.List(context.Background(), queryFromFilter(m.Filter))
+	list, err := s.repo.List(context.Background(), s.schema.queryFromFilter(m.Filter))
 	if err != nil {
 		resp.SetResultCode(resultCode(err))
 		return

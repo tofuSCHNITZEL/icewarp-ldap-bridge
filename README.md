@@ -36,6 +36,7 @@ dev stack):
 | `ICEWARP_ADMIN_EMAIL`    | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                      |
 | `ICEWARP_ADMIN_PASSWORD` | *(required)*                    | no default; set it (the dev value is in `.env.example`)            |
 | `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                         |
+| `LDAP_EMAIL_AS_UID`      | *(off)*                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username") |
 | `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                             |
 | `INTROSPECT_ICEWARP`     | *(off)*                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk |
 
@@ -49,6 +50,13 @@ entries): each account is one entry at `uid=<username>,<LDAP_USER_BASE_DN>` (e.g
 `uid=jdoe,ou=people,dc=icewarp,dc=local`) with objectClasses `top`, `person`,
 `organizationalPerson`, `inetOrgPerson`. The `uid` RDN is the key — on the IceWarp
 backend it is the mailbox local part.
+
+Set `LDAP_EMAIL_AS_UID` to expose the **primary email** as the `uid`/RDN instead
+(`uid=jdoe@icewarp.local,ou=people,…`). Use this when Keycloak's federation has
+**"Use email as username"** enabled: Keycloak then expects the RDN to be the
+email, and a mismatch makes it issue a rename (ModifyDN) the bridge can't serve —
+the connection drops and the edit is lost. The `entryUUID` (the federation link)
+is unaffected, so the toggle doesn't re-link existing users.
 
 Each entry carries these attributes (lower-cased on the wire). The name parts come
 from the IceWarp `a_vcard` contact card and are **read/write** — in Keycloak, add
