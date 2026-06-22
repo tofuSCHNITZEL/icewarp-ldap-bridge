@@ -255,7 +255,10 @@ func (s *Server) modify(w *gldap.ResponseWriter, r *gldap.Request) {
 		val := first(unwrapVals(c.Modification.Vals))
 		switch strings.ToLower(c.Modification.Type) {
 		case "userpassword":
-			if c.Operation != gldap.DeleteAttribute {
+			// Only a replace/add with a non-empty value sets a password. An empty
+			// value is skipped, not written: the bridge can't represent "no
+			// password" and a blank password must not slip through to IceWarp.
+			if c.Operation != gldap.DeleteAttribute && val != "" {
 				newPassword = &val
 			}
 		case "cn":
