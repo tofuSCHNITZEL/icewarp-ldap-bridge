@@ -75,6 +75,27 @@ func TestAttrsUID(t *testing.T) {
 	}
 }
 
+func TestAttrsGroups(t *testing.T) {
+	u := users.User{Username: "jdoe", Groups: []string{"group1", "public-folders"}}
+
+	// Default schema (no GroupAttribute) must not emit groups.
+	if got, ok := localPartSchema().attrs(u)["departmentnumber"]; ok {
+		t.Errorf("groups emitted without GroupAttribute set: %v", got)
+	}
+
+	// Configured attribute carries the group list (lower-cased key).
+	s := Schema{BaseUserDN: schemaBase, Domain: schemaDomain, GroupAttribute: "departmentNumber"}
+	got := s.attrs(u)["departmentnumber"]
+	if len(got) != 2 || got[0] != "group1" || got[1] != "public-folders" {
+		t.Errorf("group attribute: got %v", got)
+	}
+
+	// No groups → attribute absent even when configured.
+	if _, ok := s.attrs(users.User{Username: "jdoe"})["departmentnumber"]; ok {
+		t.Error("group attribute emitted for a user with no groups")
+	}
+}
+
 func TestQueryFromFilter(t *testing.T) {
 	cases := []struct {
 		name   string

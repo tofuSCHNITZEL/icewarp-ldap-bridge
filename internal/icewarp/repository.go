@@ -255,7 +255,9 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 func (r *Repository) fetch(ctx context.Context, username string) (users.User, error) {
 	email := r.email(username)
 	// One round-trip for the card (structured name) plus the scalar props.
-	props, err := r.client.GetAccountProperties(ctx, email, "a_vcard", "u_name", "u_accountdisabled")
+	// u_groups rides along for free here — it is IceWarp's per-user reverse
+	// lookup of group memberships (no separate per-group enumeration needed).
+	props, err := r.client.GetAccountProperties(ctx, email, "a_vcard", "u_name", "u_accountdisabled", "u_groups")
 	if err != nil {
 		return users.User{}, mapRepoError(err)
 	}
@@ -265,9 +267,26 @@ func (r *Repository) fetch(ctx context.Context, username string) (users.User, er
 		Fileas:   cardDisplayName(card, props["u_name"].Val),
 		Email:    email,
 		Disabled: props["u_accountdisabled"].Val == "1",
+		Groups:   parseGroups(props["u_groups"].Val),
 	}
 	cardToUser(&u, card)
 	return u, nil
+}
+
+// parseGroups turns the u_groups property — a ";"-separated list of group
+// addresses (e.g. "public-folders@icewarp.local;group1@icewarp.local;") — into
+// group identifiers (the mailbox local part of each address). Empty segments
+// (including the trailing ";") are dropped; an empty value yields nil.
+func parseGroups(val string) []string {
+	var out []string
+	for _, part := range strings.Split(val, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, localPart(part))
+	}
+	return out
 }
 
 // maxListAccounts caps how many accounts listAll will accumulate, bounding

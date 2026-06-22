@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"testing"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
@@ -168,6 +169,34 @@ func TestRepositoryGet(t *testing.T) {
 	}
 	if u.Password != "" {
 		t.Error("get must not return a password")
+	}
+}
+
+func TestRepositoryGetParsesGroups(t *testing.T) {
+	cases := []struct {
+		name string
+		val  string
+		want []string
+	}{
+		{"two groups trailing semicolon", "public-folders@icewarp.local;group1@icewarp.local;", []string{"public-folders", "group1"}},
+		{"single group", "group1@icewarp.local", []string{"group1"}},
+		{"empty", "", nil},
+		{"only separators", ";;", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockClient{getProps: Properties{
+				"a_vcard":  {Card: makeCard("firstname", "John")},
+				"u_groups": {Val: tc.val},
+			}}
+			u, err := newRepo(mock).Get(context.Background(), "jdoe")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if !slices.Equal(u.Groups, tc.want) {
+				t.Errorf("groups: got %v, want %v", u.Groups, tc.want)
+			}
+		})
 	}
 }
 

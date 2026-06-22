@@ -182,6 +182,26 @@ type accountList struct {
 	Items []string `xml:"val>item"`
 }
 
+// addMembersParams marshals to addaccountmembers (docs §10.2): the group address
+// plus a TPropertyMembers list of TPropertyMember items, each carrying the member
+// address. The per-member rights (default/recieve/post/digest) are mailing-list
+// semantics and inert for plain groups; we send only the address.
+type addMembersParams struct {
+	XMLName xml.Name   `xml:"commandparams"`
+	Email   string     `xml:"accountemail"`
+	Members memberList `xml:"members"`
+}
+
+type memberList struct {
+	Class string       `xml:"classname"` // tpropertymembers
+	Items []memberItem `xml:"val>item"`
+}
+
+type memberItem struct {
+	Class string `xml:"classname"` // tpropertymember
+	Val   string `xml:"val"`       // member address
+}
+
 // propertyValue marshals to the class-specific shape inside <propertyval>.
 type propertyValue struct {
 	class string

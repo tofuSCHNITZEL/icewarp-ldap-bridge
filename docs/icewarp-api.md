@@ -289,6 +289,16 @@ The bind primitive: validate a user's own password. **No admin session needed.**
   | `u_accountdisabled`| `TPropertyString` | `0` = enabled, `1` = disabled |
   | `u_name`           | `TPropertyString` | a display-name **string**, separate from the card (see note) |
   | `a_name`           | `TAccountName`  | givenName/surname split — **legacy/secondary** (see note) |
+  | `u_groups`         | `TPropertyString` | **the user→groups reverse lookup**: a `;`-separated list of the group addresses the account belongs to (see note) |
+
+  > **`u_groups` is the per-user group membership.** Reading it returns the
+  > groups (type-7 accounts, e.g. the built-in `public-folders`) the user is a
+  > member of, as a single `;`-separated string of full addresses with a trailing
+  > `;` (e.g. `public-folders@icewarp.local;group1@icewarp.local;`). This is the
+  > reverse of the per-group `GetAccountMemberInfoList` (§10.1) and means a
+  > user's groups need **no** group enumeration — they come free with the
+  > account's other properties in one `getaccountproperties` call. Read-only in
+  > practice for the bridge (membership is provisioned in IceWarp).
 
   > **Names live in `a_vcard`, not `a_name`/`u_name`.** Verified from the admin
   > console (HAR capture, same build): opening a user's name editor reads

@@ -37,6 +37,7 @@ dev stack):
 | `ICEWARP_ADMIN_PASSWORD` | *(required)*                    | no default; set it (the dev value is in `.env.example`)            |
 | `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                         |
 | `LDAP_EMAIL_AS_UID`      | *(off)*                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username") |
+| `LDAP_GROUP_ATTRIBUTE`   | `departmentNumber`              | multi-valued attribute carrying group memberships; empty disables it |
 | `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                             |
 | `INTROSPECT_ICEWARP`     | *(off)*                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk |
 
@@ -74,8 +75,17 @@ Optional attributes appear only when the source field is non-empty.
 | `generationQualifier` | card `suffix`                 | name suffix, e.g. Jr/III (optional)         |
 | `personalTitle`       | card `title`                  | honorific, e.g. Herr/Dr (optional)          |
 | `mail`                | primary address               | **rejected on modify** (rename unsupported) |
+| `departmentNumber`    | `u_groups` (group local parts)| group memberships, multi-valued; **read-only**; attribute name set by `LDAP_GROUP_ATTRIBUTE` (optional) |
 | `userPassword`        | `getauthtoken` / `setaccountpassword` | write-only (bind / password set)    |
 | `entryUUID`           | derived from username         | stable federation link                      |
+
+**Group memberships** are exposed as a multi-valued attribute (default
+`departmentNumber`, set by `LDAP_GROUP_ATTRIBUTE`; empty disables it), each value
+being a group's mailbox local part. It is sourced from the per-user `u_groups`
+property, so it costs no extra IceWarp calls and needs no group tree. To surface
+it in tokens, add a Keycloak *User Attribute LDAP mapper* (`departmentNumber` → a
+user attribute, **Read Only**) plus a protocol/claim mapper. It is read-only — the
+bridge never writes group membership, so keep the mapper read-only.
 
 **Operations:** bind (validate a password by binding as the user's DN), search
 (RFC 4515 filters — boolean, equality, presence, substring — post-filtered in Go),

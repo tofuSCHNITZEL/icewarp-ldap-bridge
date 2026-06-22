@@ -197,6 +197,25 @@ func (c *Client) DeleteAccounts(ctx context.Context, domain string, emails ...st
 	return checkApplied(res, "deleteaccounts")
 }
 
+// AddGroupMembers adds members (full addresses) to a group/list/resource by its
+// address. Adds are idempotent server-side. The bridge itself doesn't write
+// membership (group mapping is read-only via the u_groups property); this exists
+// for provisioning and e2e fixtures.
+func (c *Client) AddGroupMembers(ctx context.Context, groupEmail string, memberEmails ...string) error {
+	items := make([]memberItem, len(memberEmails))
+	for i, m := range memberEmails {
+		items[i] = memberItem{Class: "tpropertymember", Val: m}
+	}
+	var res resultScalar
+	if err := c.sessionCall(ctx, "addaccountmembers", addMembersParams{
+		Email:   groupEmail,
+		Members: memberList{Class: "tpropertymembers", Items: items},
+	}, &res); err != nil {
+		return err
+	}
+	return checkApplied(res, "addaccountmembers")
+}
+
 // checkApplied turns the write result semantics (1 = applied, 0 = not applied)
 // into an error.
 func checkApplied(res resultScalar, command string) error {

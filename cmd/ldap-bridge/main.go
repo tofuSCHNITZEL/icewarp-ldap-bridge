@@ -29,6 +29,7 @@ var envVars = []struct{ name, def, desc string }{
 	{"ICEWARP_ADMIN_PASSWORD", "", "service account password (required; no default — set it, e.g. via .env)"},
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
 	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
+	{"LDAP_GROUP_ATTRIBUTE", "departmentNumber", "multi-valued attribute carrying a user's group memberships (map to a claim in Keycloak); empty disables it"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
 }
@@ -41,10 +42,17 @@ func main() {
 
 	logger := newLogger(env("LOG_LEVEL"))
 
+	// env() treats an empty value as unset (uses the default); honor an explicit
+	// empty LDAP_GROUP_ATTRIBUTE so it can be disabled.
+	groupAttr := env("LDAP_GROUP_ATTRIBUTE")
+	if v, ok := os.LookupEnv("LDAP_GROUP_ATTRIBUTE"); ok {
+		groupAttr = v
+	}
 	schema := ldapserver.Schema{
-		BaseUserDN: env("LDAP_USER_BASE_DN"),
-		Domain:     env("ICEWARP_DOMAIN"),
-		EmailAsUID: truthy(env("LDAP_EMAIL_AS_UID")),
+		BaseUserDN:     env("LDAP_USER_BASE_DN"),
+		Domain:         env("ICEWARP_DOMAIN"),
+		EmailAsUID:     truthy(env("LDAP_EMAIL_AS_UID")),
+		GroupAttribute: groupAttr,
 	}
 
 	srv, err := ldapserver.New(buildRepository(*useMemory, logger), schema, logger)

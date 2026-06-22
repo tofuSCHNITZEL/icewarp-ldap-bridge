@@ -36,6 +36,11 @@ type User struct {
 	Email      string
 	Disabled   bool
 
+	// Groups are the user's group memberships as opaque identifiers. They are
+	// read-only: reads populate them, writes ignore them (the bridge never
+	// provisions group membership).
+	Groups []string
+
 	// Password is write-only: set it on Create; reads never populate it.
 	Password string
 }

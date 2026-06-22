@@ -161,6 +161,35 @@ func TestModifyCNUpdatesFileas(t *testing.T) {
 	}
 }
 
+// TestSearchReturnsGroupAttribute: a user's groups are emitted as the configured
+// multi-valued attribute.
+func TestSearchReturnsGroupAttribute(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret", Groups: []string{"group1", "public-folders"}})
+	addr := startServerSchema(t, repo, Schema{BaseUserDN: testBaseDN, Domain: "icewarp.local", GroupAttribute: "departmentNumber"})
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(uid=johndoe)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(res.Entries))
+	}
+	// The server emits lower-cased attribute keys; go-ldap matches them exactly.
+	got := res.Entries[0].GetAttributeValues("departmentnumber")
+	if len(got) != 2 || got[0] != "group1" || got[1] != "public-folders" {
+		t.Fatalf("departmentNumber: got %v, want [group1 public-folders]", got)
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {
