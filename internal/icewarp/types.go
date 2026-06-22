@@ -202,6 +202,26 @@ type memberItem struct {
 	Val   string `xml:"val"`       // member address
 }
 
+// memberInfoParams marshals to GetAccountMemberInfoList (docs §10.1): read a
+// group's members, keyed by the group address in `who`.
+type memberInfoParams struct {
+	XMLName xml.Name `xml:"commandparams"`
+	Who     string   `xml:"who"`
+	Offset  int      `xml:"offset,omitempty"`
+	Count   int      `xml:"count,omitempty"`
+}
+
+// memberInfoResult decodes the member list; each member address is in <val>.
+type memberInfoResult struct {
+	XMLName      xml.Name          `xml:"result"`
+	Items        []memberInfoEntry `xml:"item"`
+	OverallCount int               `xml:"overallcount"`
+}
+
+type memberInfoEntry struct {
+	Val string `xml:"val"`
+}
+
 // propertyValue marshals to the class-specific shape inside <propertyval>.
 type propertyValue struct {
 	class string

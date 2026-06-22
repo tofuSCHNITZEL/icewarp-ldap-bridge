@@ -11,15 +11,16 @@ import (
 
 // Repository is a concurrency-safe in-memory user store.
 type Repository struct {
-	mu    sync.RWMutex
-	users map[string]users.User // keyed by lower-cased username
+	mu     sync.RWMutex
+	users  map[string]users.User // keyed by lower-cased username
+	groups map[string][]string   // group name -> member usernames, keyed by lower-cased name
 }
 
 var _ users.Repository = (*Repository)(nil)
 
 // New returns an empty repository.
 func New() *Repository {
-	return &Repository{users: make(map[string]users.User)}
+	return &Repository{users: make(map[string]users.User), groups: make(map[string][]string)}
 }
 
 // Seed inserts a user directly, bypassing the duplicate check — for fixtures.
@@ -27,6 +28,13 @@ func (r *Repository) Seed(u users.User) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.users[key(u.Username)] = u
+}
+
+// SeedGroup inserts a group with the given member usernames — for fixtures.
+func (r *Repository) SeedGroup(name string, members ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.groups[key(name)] = members
 }
 
 func (r *Repository) Authenticate(_ context.Context, username, password string) error {
@@ -117,6 +125,26 @@ func (r *Repository) Delete(_ context.Context, username string) error {
 	}
 	delete(r.users, key(username))
 	return nil
+}
+
+func (r *Repository) ListGroups(_ context.Context) ([]users.Group, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]users.Group, 0, len(r.groups))
+	for name := range r.groups {
+		out = append(out, users.Group{Name: name})
+	}
+	return out, nil
+}
+
+func (r *Repository) GroupMembers(_ context.Context, name string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	members, ok := r.groups[key(name)]
+	if !ok {
+		return nil, users.ErrNotFound
+	}
+	return append([]string(nil), members...), nil
 }
 
 func key(username string) string { return strings.ToLower(username) }

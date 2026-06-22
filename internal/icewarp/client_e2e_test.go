@@ -211,6 +211,23 @@ func TestClientE2EGroups(t *testing.T) {
 	if !contains(u.Groups, groupMbx) {
 		t.Fatalf("user groups = %v, want it to contain %q", u.Groups, groupMbx)
 	}
+
+	// The forward direction: the group is listed, and its member list contains
+	// the user (drives the LDAP group entries / member attribute).
+	groups, _, err := client.ListGroups(withTimeout(t, 30*time.Second), domain, 0, 0)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if findAccount(groups, groupEmail) == nil {
+		t.Fatalf("list groups: %s not found in %v", groupEmail, emails(groups))
+	}
+	members, _, err := client.GetGroupMembers(withTimeout(t, 30*time.Second), groupEmail, 0, 0)
+	if err != nil {
+		t.Fatalf("get group members: %v", err)
+	}
+	if !contains(members, userEmail) {
+		t.Fatalf("group members = %v, want it to contain %q", members, userEmail)
+	}
 }
 
 func contains(s []string, want string) bool {

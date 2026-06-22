@@ -30,6 +30,8 @@ type accountAPI interface {
 	SetAccountProperties(ctx context.Context, email string, props ...WriteProperty) error
 	SetAccountCard(ctx context.Context, email string, card AccountCard) error
 	DeleteAccounts(ctx context.Context, domain string, emails ...string) error
+	ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error)
+	GetGroupMembers(ctx context.Context, groupEmail string, offset, count int) ([]string, int, error)
 }
 
 var _ accountAPI = (*Client)(nil)
@@ -247,6 +249,63 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 		return mapRepoError(err)
 	}
 	return nil
+}
+
+// ListGroups returns the domain's groups (accounttype 7) as lightweight Group
+// values (Name only); members are resolved per-group via GroupMembers.
+func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
+	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
+	defer cancel()
+
+	const pageSize = 250
+	var groups []users.Group
+	for offset := 0; ; {
+		page, total, err := r.client.ListGroups(ctx, r.domain, offset, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range page {
+			groups = append(groups, users.Group{Name: localPart(a.Email)})
+		}
+		offset += len(page)
+		if len(page) == 0 || offset >= total {
+			return groups, nil
+		}
+		if len(groups) >= maxListAccounts {
+			r.logger.Warn("ListGroups: cap reached, truncating", "cap", maxListAccounts, "domain", r.domain)
+			return groups, nil
+		}
+	}
+}
+
+// GroupMembers returns the member usernames of a group, or ErrNotFound if the
+// group doesn't exist. Non-address member tokens (e.g. the "[domain]" token the
+// admin picker can store) are skipped; addresses are reduced to the local part.
+func (r *Repository) GroupMembers(ctx context.Context, name string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
+	defer cancel()
+
+	const pageSize = 250
+	var members []string
+	for offset := 0; ; {
+		page, total, err := r.client.GetGroupMembers(ctx, r.email(name), offset, pageSize)
+		if err != nil {
+			return nil, mapRepoError(err)
+		}
+		for _, m := range page {
+			if strings.Contains(m, "@") { // real addresses only, not "[domain]" tokens
+				members = append(members, localPart(m))
+			}
+		}
+		offset += len(page)
+		if len(page) == 0 || offset >= total {
+			return members, nil
+		}
+		if len(members) >= maxListAccounts {
+			r.logger.Warn("GroupMembers: cap reached, truncating", "cap", maxListAccounts, "group", name)
+			return members, nil
+		}
+	}
 }
 
 // fetch reads a user's properties without applying its own timeout (the caller

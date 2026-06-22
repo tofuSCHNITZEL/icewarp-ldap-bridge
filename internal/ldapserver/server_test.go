@@ -190,6 +190,97 @@ func TestSearchReturnsGroupAttribute(t *testing.T) {
 	}
 }
 
+const testGroupBaseDN = "ou=groups,dc=icewarp,dc=local"
+
+// groupSchema enables both subtrees for the wire group tests.
+func groupSchema() Schema {
+	return Schema{BaseUserDN: testBaseDN, Domain: "icewarp.local", GroupBaseDN: testGroupBaseDN}
+}
+
+// TestSearchServesGroupEntries: a subtree search under the groups base returns
+// group entries with objectClass groupOfNames and member DNs.
+func TestSearchServesGroupEntries(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	repo.Seed(users.User{Username: "jane", Email: "jane@icewarp.local"})
+	repo.SeedGroup("group1", "johndoe", "jane")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testGroupBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(objectClass=groupOfNames)",
+	})
+	if err != nil {
+		t.Fatalf("group search: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d group entries, want 1", len(res.Entries))
+	}
+	e := res.Entries[0]
+	if e.DN != "cn=group1,"+testGroupBaseDN {
+		t.Errorf("group DN: %q", e.DN)
+	}
+	members := e.GetAttributeValues("member")
+	if len(members) != 2 || members[0] != "uid=johndoe,"+testBaseDN || members[1] != "uid=jane,"+testBaseDN {
+		t.Errorf("member DNs: %v", members)
+	}
+}
+
+// TestSearchUserHasMemberOf: a user entry carries memberOf with group DNs.
+func TestSearchUserHasMemberOf(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret", Groups: []string{"group1"}})
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: "(uid=johndoe)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(res.Entries))
+	}
+	// Server emits lower-cased keys; go-ldap matches exactly.
+	if mo := res.Entries[0].GetAttributeValues("memberof"); len(mo) != 1 || mo[0] != "cn=group1,"+testGroupBaseDN {
+		t.Fatalf("memberOf: got %v, want [cn=group1,%s]", mo, testGroupBaseDN)
+	}
+}
+
+// TestSearchUserSubtreeSkipsGroups: a search under the users base must not
+// return group entries (and must not enumerate them).
+func TestSearchUserSubtreeSkipsGroups(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	repo.SeedGroup("group1", "johndoe")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: "(objectClass=*)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, e := range res.Entries {
+		if e.DN == "cn=group1,"+testGroupBaseDN {
+			t.Fatal("user-subtree search returned a group entry")
+		}
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {

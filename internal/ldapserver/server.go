@@ -153,10 +153,42 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 
+	base := normalizeDN(m.BaseDN)
+	scope := int64(m.Scope)
+
+	// The bridge serves entries under two containers: users (BaseUserDN) and,
+	// when enabled, groups (GroupBaseDN). Only run the flow for a container the
+	// search can actually reach, so a user-only search never enumerates groups
+	// (and their members) and vice versa.
+	if subtreeInRange(normalizeDN(s.schema.BaseUserDN), base, scope) {
+		if err := s.searchUsers(w, r, m, base, scope); err != nil {
+			resp.SetResultCode(resultCode(err))
+			return
+		}
+	}
+	if s.schema.GroupBaseDN != "" && subtreeInRange(normalizeDN(s.schema.GroupBaseDN), base, scope) {
+		if err := s.searchGroups(w, r, m, base, scope); err != nil {
+			resp.SetResultCode(resultCode(err))
+			return
+		}
+	}
+
+	// We return everything in one response, so when the client used the paged
+	// results control we acknowledge it with an empty cookie (= last page).
+	// Clients (e.g. Keycloak) warn if the control is missing from the response.
+	if requestedPaging(m.Controls) {
+		if pc, err := gldap.NewControlPaging(0); err == nil {
+			resp.SetControls(pc)
+		}
+	}
+	resp.SetResultCode(gldap.ResultSuccess)
+}
+
+// searchUsers emits the user entries matching the search.
+func (s *Server) searchUsers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) error {
 	list, err := s.repo.List(context.Background(), s.schema.queryFromFilter(m.Filter))
 	if err != nil {
-		resp.SetResultCode(resultCode(err))
-		return
+		return err
 	}
 
 	// Prefilter on the cheap identity attributes (uid, mail, objectClass,
@@ -164,10 +196,9 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 	// structured name — it lives behind a per-user backend read — so a filter on
 	// a name-only attribute (sn, givenName, …) won't match here; Keycloak filters
 	// only on identity attributes, so that's not a limitation in practice.
-	base := normalizeDN(m.BaseDN)
 	var candidates []users.User
 	for _, u := range list {
-		if inScope(normalizeDN(s.schema.userDN(u.Username)), base, int64(m.Scope)) &&
+		if inScope(normalizeDN(s.schema.userDN(u.Username)), base, scope) &&
 			matchFilter(m.Filter, s.schema.attrs(u)) {
 			candidates = append(candidates, u)
 		}
@@ -182,16 +213,56 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		}
 		_ = w.Write(r.NewSearchResponseEntry(s.schema.userDN(u.Username), gldap.WithAttributes(attrs)))
 	}
+	return nil
+}
 
-	// We return everything in one response, so when the client used the paged
-	// results control we acknowledge it with an empty cookie (= last page).
-	// Clients (e.g. Keycloak) warn if the control is missing from the response.
-	if requestedPaging(m.Controls) {
-		if pc, err := gldap.NewControlPaging(0); err == nil {
-			resp.SetControls(pc)
+// searchGroups emits the group entries matching the search. Like the user flow
+// it prefilters on cheap attributes (cn, objectClass, entryUUID), then resolves
+// members only for the survivors. A base-scoped lookup of a single group DN
+// skips the enumeration entirely.
+func (s *Server) searchGroups(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) error {
+	var candidates []users.Group
+	if name, ok := s.schema.groupNameFromDN(base); ok && scope == scopeBaseObject {
+		candidates = []users.Group{{Name: name}}
+	} else {
+		groups, err := s.repo.ListGroups(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, g := range groups {
+			if inScope(normalizeDN(s.schema.groupDN(g.Name)), base, scope) &&
+				matchFilter(m.Filter, s.schema.groupAttrs(g)) {
+				candidates = append(candidates, g)
+			}
 		}
 	}
-	resp.SetResultCode(gldap.ResultSuccess)
+
+	for _, g := range s.enrichGroups(context.Background(), candidates) {
+		attrs := s.schema.groupAttrs(g)
+		if !matchFilter(m.Filter, attrs) {
+			continue
+		}
+		_ = w.Write(r.NewSearchResponseEntry(s.schema.groupDN(g.Name), gldap.WithAttributes(attrs)))
+	}
+	return nil
+}
+
+// subtreeInRange reports whether entries living directly under containerDN could
+// be in scope of a search at (base, scope). It gates the (potentially expensive)
+// per-container flow; per-entry inScope still filters precisely. Both DNs must be
+// normalized.
+func subtreeInRange(container, base string, scope int64) bool {
+	switch scope {
+	case scopeBaseObject: // base names a single entry directly under container
+		return strings.HasSuffix(base, ","+container)
+	case scopeSingleLevel: // entries are the direct children of base
+		return base == container
+	case scopeWholeSubtree:
+		return base == container ||
+			strings.HasSuffix(container, ","+base) || // container is below base
+			strings.HasSuffix(base, ","+container) // base is at/below container
+	}
+	return false
 }
 
 // enrichConcurrency bounds how many per-user backend reads run at once in enrich.
@@ -226,6 +297,39 @@ func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.Us
 			out = append(out, u)
 			mu.Unlock()
 		}(c.Username)
+	}
+	wg.Wait()
+	return out
+}
+
+// enrichGroups resolves each candidate group's members via repo.GroupMembers,
+// concurrently and bounded. A group that no longer exists is dropped silently;
+// any other read error drops it with a warning. Order is not preserved.
+func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) []users.Group {
+	sem := make(chan struct{}, enrichConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	out := make([]users.Group, 0, len(candidates))
+	for _, c := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			members, err := s.repo.GroupMembers(ctx, name)
+			if err != nil {
+				if !errors.Is(err, users.ErrNotFound) {
+					s.logger.Warn("ldap search: group enrich failed, entry skipped", "group", name, "err", err)
+				}
+				return
+			}
+			mu.Lock()
+			out = append(out, users.Group{Name: name, Members: members})
+			mu.Unlock()
+		}(c.Name)
 	}
 	wg.Wait()
 	return out
