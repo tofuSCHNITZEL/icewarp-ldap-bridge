@@ -12,7 +12,9 @@ reverse-engineer.
   only guaranteed for this build. Re-verify after a server upgrade.
 - **Authoritative sources used:** live probing of `/icewarpapi/`; the admin
   console client JS (`html/admin/client/inc/wm_user.js`, `javascript.js`,
-  `bundle.js`) which generates the stanzas; the server-side PHP tunnel
+  `bundle.js`) which generates the stanzas — for groups/membership specifically
+  `wa_accountmembers.js` (the member commands) and `wa_list.js` (the
+  `Get<Label>InfoList` naming) plus `obj_groupmembers.js`; the server-side PHP tunnel
   (`html/_shared/api/apitunnel.php`) which fixes the parameter order for
   `authenticate` / `getauthtoken`; and network captures (HAR) of the admin
   console reading/writing a user's name (the `a_vcard` flow in §5/§6).
@@ -68,6 +70,7 @@ Account/server properties are typed. The `<propertyval>` wrapper carries a
 | `TPropertyString`    | `<val>TEXT</val>`                                    | most scalar `u_*` props (name, mailbox, disabled flag) |
 | `TPropertyNoValue`   | *(empty)*                                            | unset property |
 | `TPropertyStringList`| `<val><item>A</item><item>B</item></val>`           | aliases, `deleteaccounts` account list |
+| `TPropertyMembers`   | `<val>` of `TPropertyMember` items, each `<val>ADDRESS</val>` + optional `default`/`recieve`/`post`/`digest` rights | group / mailing-list membership writes (§10) |
 | `TAccountName`       | `<name>GIVEN</name><surname>FAMILY</surname>`        | `a_name` — a legacy givenName/surname split (see §5) |
 | `TAccountCard`       | `<classname>TAccountCard</classname>` + ~70 leaf fields (`firstname`, `lastname`, `fileas`, `nickname`, addresses, phones, …) | `a_vcard` — the contact card; **the structured-name store the admin UI actually edits** |
 | `TAccountState`      | `<state>0\|1</state>` (read-only)                     | enabled/disabled in account lists |
@@ -225,7 +228,7 @@ The bind primitive: validate a user's own password. **No admin session needed.**
     **case-insensitive glob** (`*`, `?`) matched against **both the login name
     and the display name** (`OIDC*`, `oidct*`, `*test*`, `ADMIN*` all match the
     same account). `*` returns everything.
-  - `typemask` restricts to an `accounttype` (e.g. `0` = users only).
+  - `typemask` restricts to an `accounttype` (e.g. `0` = users, `7` = groups).
   - `planmask` / `servicemask` also exist (not needed by the bridge).
   - For exact LDAP filter semantics (e.g. `(mail=x)` vs `(uid=x)`), push a coarse
     `namemask` down and **post-filter in Go** — the glob can't express full LDAP
@@ -256,7 +259,7 @@ The bind primitive: validate a user's own password. **No admin session needed.**
   | `name`         | display name (`u_name`) |
   | `email`        | primary address |
   | `displayemail` | shown address (usually same as `email`) |
-  | `accounttype`  | `0` = user, `7` = public folder / resource (others exist) |
+  | `accounttype`  | `0` = user, `1` = mailing list, `7` = group, `8` = resource (also `2`–`6`: executable / notification / static route / catalog / list server). The built-in `public-folders` account is a type-`7` group. |
   | `accountstate/state` | **`0` = enabled, `1` = disabled** |
   | `admintype`    | `0` = normal, `1` = admin |
 
@@ -393,7 +396,11 @@ The bind primitive: validate a user's own password. **No admin session needed.**
   | propname    | value      | omitted → error |
   | ----------- | ---------- | --------------- |
   | `u_mailbox` | local part | `account_mailbox_property_missing` |
-  | `u_type`    | `0` (user) | `account_type_property_missing` |
+  | `u_type`    | account type | `account_type_property_missing` |
+
+  `u_type` selects the account type: `0` = user, `7` = group, `1` = mailing
+  list, `8` = resource. Creating a **group** is just `createaccount` with
+  `u_type=7`; manage its members with the commands in [§10](#10-groups--membership).
 
   Practically also set `u_name` (display string) here, set the structured name
   in `a_vcard` via a follow-up `setaccountproperties` (see §5/§6 — the card is a
@@ -458,6 +465,128 @@ The bind primitive: validate a user's own password. **No admin session needed.**
 
 ---
 
+## 10. Groups & membership
+
+A **group** is an account with `accounttype` / `u_type` = `7`. Its lifecycle
+reuses the ordinary account commands — there is no separate "group" command for
+create/delete/rename:
+
+| group operation        | command                              | how |
+| ---------------------- | ------------------------------------ | --- |
+| create group           | `createaccount` (§8)                 | `u_type=7`, plus `u_mailbox` and `u_name` |
+| delete group           | `deleteaccounts` (§9)                | full address in the `accountlist` |
+| list groups            | `getaccountsinfolist` (§4)           | `filter/typemask=7` |
+| rename / display name  | `getaccountproperties` / `setaccountproperties` (§5/§6) | `u_name`, `a_vcard` |
+
+**Membership is a separate store, keyed by the group's email** (the `who` /
+`accountemail` parameter below). The same membership commands serve groups,
+mailing lists and resources. The per-member rights (`default`, `recieve` —
+*sic, misspelled on the server* — `post`, `digest`) are mailing-list semantics
+and are **inert for plain groups** (they read back `0` regardless of what you
+write).
+
+### 10.1 `GetAccountMemberInfoList` — read members
+
+- **sid required:** yes.
+- **Parameters:**
+
+  | element  | req | notes |
+  | -------- | --- | ----- |
+  | `who`    | yes | group address; unknown account → `account_invalid` |
+  | `offset` | no  | pagination start (default 0) |
+  | `count`  | no  | page size |
+  | `filter` | no  | `<filter><namemask>…</namemask></filter>` — same case-insensitive glob as §4, filters members server-side |
+
+- **Success:** repeated `<item>`, then `<offset>` and `<overallcount>` (page like §4):
+
+  ```xml
+  <result>
+    <item>
+      <val>johndoe@icewarp.local</val>   <!-- the member address -->
+      <default>0</default><recieve>0</recieve><post>0</post><digest>0</digest>
+      <params/>
+    </item>
+    <offset>0</offset>
+    <overallcount>1</overallcount>
+  </result>
+  ```
+
+  The member **address is in `<val>`** — there is no `<name>`/display field, so
+  resolving member display names needs a separate `getaccountproperties` lookup.
+
+### 10.2 `addaccountmembers` — add members
+
+- **sid required:** yes.
+- **Parameters:** `accountemail` (the group) + `members`, a `TPropertyMembers`
+  list of `TPropertyMember` items.
+- **Request:**
+
+  ```xml
+  <iq sid="SID"><query xmlns="admin:iq:rpc"><commandname>addaccountmembers</commandname>
+    <commandparams>
+      <accountemail>group1@icewarp.local</accountemail>
+      <members>
+        <classname>tpropertymembers</classname>
+        <val>
+          <item><classname>tpropertymember</classname><val>johndoe@icewarp.local</val><default>1</default></item>
+        </val>
+      </members>
+    </commandparams></query></iq>
+  ```
+
+- **Success:** `<result>1</result>`. **Idempotent** — re-adding an existing
+  member returns `1` and does not duplicate.
+- **No validation of member addresses.** The server stores whatever string you
+  send: a non-existent account (`ghost@icewarp.local`) is accepted and listed,
+  and a **bracketed domain token** `[icewarp.local]` adds the *whole domain* as a
+  member (this is what the admin UI's account-picker emits for a domain
+  selection). The bridge should send only real, individual addresses.
+- **Errors:** `account_invalid` (no such group), `session_invalid`.
+
+### 10.3 `deleteaccountmembers` — remove specific members
+
+Same shape as `addaccountmembers` (rights omitted). `<result>1</result>` on
+success; removing an absent member is a no-op `1`.
+
+```xml
+<commandparams>
+  <accountemail>group1@icewarp.local</accountemail>
+  <members>
+    <classname>tpropertymembers</classname>
+    <val><item><classname>tpropertymember</classname><val>johndoe@icewarp.local</val></item></val>
+  </members>
+</commandparams>
+```
+
+### 10.4 `deleteAllAccountMembers` — clear members
+
+- **Parameters:** `accountemail` + `filter/namemask` (`*` = all). Removes every
+  member matching the mask. `<result>1</result>`.
+
+### 10.5 `editaccountmembers` / `EditAllAccountMembersRights` — member rights
+
+Set per-member (`editaccountmembers`) or all-member
+(`EditAllAccountMembersRights`) rights flags (`default`, `recieve` *(sic)*,
+`post`, `digest`). **Mailing-list only** — irrelevant to plain groups, where the
+flags do not stick. Documented for completeness; the bridge does not need them.
+
+### Caveats
+
+- **Membership is not validated** — arbitrary / non-existent addresses and
+  `[domain]` tokens are accepted (§10.2). Treat the member list as opaque
+  strings, not verified accounts.
+- **Adds are idempotent; rights flags are inert for groups.**
+- **Deleting a group purges its membership** (verified: delete + recreate of the
+  same address comes back empty).
+- **Account create/delete is applied with a small async lag.** A single
+  create-then-add is read-after-write consistent, but hammering one group address
+  with rapid create/delete/add in a tight loop can briefly desync the member
+  store (adds returning `result=1` without taking effect). For a bridge that
+  doesn't churn the same address in a loop this is not a concern; if you do,
+  poll/retry rather than assuming immediate consistency.
+
+---
+
 ## Cross-cutting
 
 ### Session lifecycle
@@ -510,7 +639,7 @@ The bind primitive: validate a user's own password. **No admin session needed.**
 | `auth_login_invalid`               | `getauthtoken`, `authenticate` | wrong password / unknown account / unknown domain (**tarpit**) | `InvalidCredentials` |
 | `account_disabled_2`               | `getauthtoken`                 | correct password, account disabled (**immediate**) | `InvalidCredentials` |
 | `session_invalid`                  | all session commands           | missing / expired / wrong `sid` | re-authenticate, retry |
-| `account_invalid`                  | `getaccountproperties`, `set*` | no such account | `NoSuchObject` |
+| `account_invalid`                  | `getaccountproperties`, `set*`, `*accountmembers` (§10) | no such account / group | `NoSuchObject` |
 | `account_email_parameter_missing`  | account commands               | `accountemail` omitted | `ProtocolError` (bridge bug) |
 | `domain_parameter_empty`           | `getaccountsinfolist`, `create/deleteaccounts` | `domainstr` empty | `ProtocolError` (bridge bug) |
 | `account_mailbox_property_missing` | `createaccount`                | no `u_mailbox` | — (fixture bug) |
@@ -533,3 +662,9 @@ The bind primitive: validate a user's own password. **No admin session needed.**
 | e2e: create fixture            | `createaccount`        | yes | `domainstr`, `accountproperties` (`u_mailbox`, `u_type`) |
 | e2e: delete fixture            | `deleteaccounts`       | yes | `domainstr`, `accountlist` (TPropertyStringList) |
 | service-account login          | `authenticate`         | no  | `authtype=0`, `email`, `password` |
+| `search` groups                | `getaccountsinfolist`  | yes | `domainstr`, `filter/typemask=7` |
+| read group members             | `GetAccountMemberInfoList` | yes | `who`, `offset`, `count`, `filter/namemask` |
+| add group members              | `addaccountmembers`    | yes | `accountemail`, `members` (TPropertyMembers) |
+| remove group members           | `deleteaccountmembers` / `deleteAllAccountMembers` | yes | `accountemail`, `members` / `filter` |
+| create group                   | `createaccount`        | yes | `domainstr`, `accountproperties` (`u_type=7`) |
+| delete group                   | `deleteaccounts`       | yes | `domainstr`, `accountlist` |
