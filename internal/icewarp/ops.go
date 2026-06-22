@@ -94,6 +94,45 @@ func (c *Client) ListAccounts(ctx context.Context, domain, nameMask string, offs
 	return res.Items, res.OverallCount, nil
 }
 
+// ListGroups searches a domain for group accounts (accounttype 7). offset/count
+// page the results (pass count <= 0 for the server default); it returns the page
+// plus the overall match count.
+func (c *Client) ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error) {
+	groupType := 7
+	var res listResult
+	err := c.sessionCall(ctx, "getaccountsinfolist", listParams{
+		Domain: domain,
+		Filter: listFilter{NameMask: "*", TypeMask: &groupType},
+		Offset: offset,
+		Count:  count,
+	}, &res)
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.Items, res.OverallCount, nil
+}
+
+// GetGroupMembers reads the member addresses of a group (or list/resource) by its
+// address. offset/count page the results (pass count <= 0 for the server
+// default); it returns the page of member addresses plus the overall count.
+func (c *Client) GetGroupMembers(ctx context.Context, groupEmail string, offset, count int) ([]string, int, error) {
+	var res memberInfoResult
+	if err := c.sessionCall(ctx, "getaccountmemberinfolist", memberInfoParams{
+		Who:    groupEmail,
+		Offset: offset,
+		Count:  count,
+	}, &res); err != nil {
+		return nil, 0, err
+	}
+	members := make([]string, 0, len(res.Items))
+	for _, it := range res.Items {
+		if it.Val != "" {
+			members = append(members, it.Val)
+		}
+	}
+	return members, res.OverallCount, nil
+}
+
 // GetAccountProperties reads the named properties of one account.
 func (c *Client) GetAccountProperties(ctx context.Context, email string, props ...string) (Properties, error) {
 	items := make([]propNameItem, len(props))
@@ -195,6 +234,25 @@ func (c *Client) DeleteAccounts(ctx context.Context, domain string, emails ...st
 		return err
 	}
 	return checkApplied(res, "deleteaccounts")
+}
+
+// AddGroupMembers adds members (full addresses) to a group/list/resource by its
+// address. Adds are idempotent server-side. The bridge itself doesn't write
+// membership (group mapping is read-only via the u_groups property); this exists
+// for provisioning and e2e fixtures.
+func (c *Client) AddGroupMembers(ctx context.Context, groupEmail string, memberEmails ...string) error {
+	items := make([]memberItem, len(memberEmails))
+	for i, m := range memberEmails {
+		items[i] = memberItem{Class: "tpropertymember", Val: m}
+	}
+	var res resultScalar
+	if err := c.sessionCall(ctx, "addaccountmembers", addMembersParams{
+		Email:   groupEmail,
+		Members: memberList{Class: "tpropertymembers", Items: items},
+	}, &res); err != nil {
+		return err
+	}
+	return checkApplied(res, "addaccountmembers")
 }
 
 // checkApplied turns the write result semantics (1 = applied, 0 = not applied)

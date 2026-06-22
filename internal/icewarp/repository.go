@@ -30,6 +30,8 @@ type accountAPI interface {
 	SetAccountProperties(ctx context.Context, email string, props ...WriteProperty) error
 	SetAccountCard(ctx context.Context, email string, card AccountCard) error
 	DeleteAccounts(ctx context.Context, domain string, emails ...string) error
+	ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error)
+	GetGroupMembers(ctx context.Context, groupEmail string, offset, count int) ([]string, int, error)
 }
 
 var _ accountAPI = (*Client)(nil)
@@ -249,13 +251,72 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
+// ListGroups returns the domain's groups (accounttype 7) as lightweight Group
+// values (Name only); members are resolved per-group via GroupMembers.
+func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
+	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
+	defer cancel()
+
+	const pageSize = 250
+	var groups []users.Group
+	for offset := 0; ; {
+		page, total, err := r.client.ListGroups(ctx, r.domain, offset, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range page {
+			groups = append(groups, users.Group{Name: localPart(a.Email)})
+		}
+		offset += len(page)
+		if len(page) == 0 || offset >= total {
+			return groups, nil
+		}
+		if len(groups) >= maxListAccounts {
+			r.logger.Warn("ListGroups: cap reached, truncating", "cap", maxListAccounts, "domain", r.domain)
+			return groups, nil
+		}
+	}
+}
+
+// GroupMembers returns the member usernames of a group, or ErrNotFound if the
+// group doesn't exist. Non-address member tokens (e.g. the "[domain]" token the
+// admin picker can store) are skipped; addresses are reduced to the local part.
+func (r *Repository) GroupMembers(ctx context.Context, name string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
+	defer cancel()
+
+	const pageSize = 250
+	var members []string
+	for offset := 0; ; {
+		page, total, err := r.client.GetGroupMembers(ctx, r.email(name), offset, pageSize)
+		if err != nil {
+			return nil, mapRepoError(err)
+		}
+		for _, m := range page {
+			if strings.Contains(m, "@") { // real addresses only, not "[domain]" tokens
+				members = append(members, localPart(m))
+			}
+		}
+		offset += len(page)
+		if len(page) == 0 || offset >= total {
+			return members, nil
+		}
+		if len(members) >= maxListAccounts {
+			r.logger.Warn("GroupMembers: cap reached, truncating", "cap", maxListAccounts, "group", name)
+			return members, nil
+		}
+	}
+}
+
 // fetch reads a user's properties without applying its own timeout (the caller
 // sets one). The structured name lives in the a_vcard card (what the IceWarp
 // admin UI edits); u_name is only a fallback display name.
 func (r *Repository) fetch(ctx context.Context, username string) (users.User, error) {
 	email := r.email(username)
 	// One round-trip for the card (structured name) plus the scalar props.
-	props, err := r.client.GetAccountProperties(ctx, email, "a_vcard", "u_name", "u_accountdisabled")
+	// u_groups rides along for free here — it is IceWarp's per-user reverse
+	// lookup of group memberships (no separate per-group enumeration needed).
+	props, err := r.client.GetAccountProperties(ctx, email, "a_vcard", "u_name", "u_accountdisabled", "u_groups")
 	if err != nil {
 		return users.User{}, mapRepoError(err)
 	}
@@ -265,9 +326,26 @@ func (r *Repository) fetch(ctx context.Context, username string) (users.User, er
 		Fileas:   cardDisplayName(card, props["u_name"].Val),
 		Email:    email,
 		Disabled: props["u_accountdisabled"].Val == "1",
+		Groups:   parseGroups(props["u_groups"].Val),
 	}
 	cardToUser(&u, card)
 	return u, nil
+}
+
+// parseGroups turns the u_groups property — a ";"-separated list of group
+// addresses (e.g. "public-folders@icewarp.local;group1@icewarp.local;") — into
+// group identifiers (the mailbox local part of each address). Empty segments
+// (including the trailing ";") are dropped; an empty value yields nil.
+func parseGroups(val string) []string {
+	var out []string
+	for _, part := range strings.Split(val, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, localPart(part))
+	}
+	return out
 }
 
 // maxListAccounts caps how many accounts listAll will accumulate, bounding

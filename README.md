@@ -37,6 +37,7 @@ dev stack):
 | `ICEWARP_ADMIN_PASSWORD` | *(required)*                    | no default; set it (the dev value is in `.env.example`)            |
 | `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                         |
 | `LDAP_EMAIL_AS_UID`      | *(off)*                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username") |
+| `LDAP_GROUP_BASE_DN`     | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it |
 | `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                             |
 | `INTROSPECT_ICEWARP`     | *(off)*                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk |
 
@@ -74,8 +75,31 @@ Optional attributes appear only when the source field is non-empty.
 | `generationQualifier` | card `suffix`                 | name suffix, e.g. Jr/III (optional)         |
 | `personalTitle`       | card `title`                  | honorific, e.g. Herr/Dr (optional)          |
 | `mail`                | primary address               | **rejected on modify** (rename unsupported) |
+| `memberOf`            | `u_groups` (group DNs)        | group memberships as group DNs, multi-valued; **read-only**; present when `LDAP_GROUP_BASE_DN` is set |
 | `userPassword`        | `getauthtoken` / `setaccountpassword` | write-only (bind / password set)    |
 | `entryUUID`           | derived from username         | stable federation link                      |
+
+### Groups
+
+The bridge exposes IceWarp groups (accounttype 7) read-only as LDAP entries
+(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`): each group is an
+entry (`cn=<group>,<base>`, objectClass `groupOfNames`, `member` = user DNs) and
+each user entry gains a `memberOf` of group DNs. Point a Keycloak *Group LDAP
+mapper* at the base DN to import them as Keycloak **groups** (hierarchy, role
+mappings); for a plain group claim, add a *Group Membership* protocol mapper on
+top. Set the env var empty to disable groups entirely.
+
+A group entry (`cn=<group>,<LDAP_GROUP_BASE_DN>`) carries these attributes:
+
+| LDAP attribute | IceWarp source                       | notes                                              |
+| -------------- | ------------------------------------ | -------------------------------------------------- |
+| `objectClass`  | fixed                                | `top`, `groupOfNames`                              |
+| `cn`           | group mailbox local part             | the RDN                                            |
+| `member`       | group members (`GetAccountMemberInfoList`) | member user DNs (`uid=<user>,<LDAP_USER_BASE_DN>`); omitted for an empty group |
+| `entryUUID`    | derived from the group name          | stable; namespaced so it never collides with a user's |
+
+Groups are **read-only** — the bridge never provisions group membership, so keep
+the Keycloak mapper read-only.
 
 **Operations:** bind (validate a password by binding as the user's DN), search
 (RFC 4515 filters — boolean, equality, presence, substring — post-filtered in Go),

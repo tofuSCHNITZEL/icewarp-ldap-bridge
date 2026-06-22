@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,6 +159,84 @@ func TestClientE2E(t *testing.T) {
 	if _, err := client.GetAuthToken(withTimeout(t, 30*time.Second), email, password); !errors.Is(err, icewarp.ErrAccountDisabled) {
 		t.Fatalf("auth token (disabled): got %v, want ErrAccountDisabled", err)
 	}
+}
+
+// TestClientE2EGroups proves the user→groups reverse lookup: create a user and a
+// group, add the user to the group, and read it back via the u_groups property.
+func TestClientE2EGroups(t *testing.T) {
+	client, domain := newClient(t)
+	if err := client.Authenticate(withTimeout(t, 60*time.Second)); err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	const userMbx, groupMbx = "e2egmember", "e2egroup"
+	userEmail := userMbx + "@" + domain
+	groupEmail := groupMbx + "@" + domain
+
+	// Start clean and guarantee teardown (deleting the group purges membership).
+	cleanup := func() {
+		_ = client.DeleteAccounts(withTimeout(t, 30*time.Second), domain, userEmail, groupEmail)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if err := client.CreateAccount(withTimeout(t, 30*time.Second), domain,
+		icewarp.StringProperty("u_mailbox", userMbx), icewarp.StringProperty("u_type", "0")); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := client.CreateAccount(withTimeout(t, 30*time.Second), domain,
+		icewarp.StringProperty("u_mailbox", groupMbx), icewarp.StringProperty("u_type", "7"),
+		icewarp.StringProperty("u_name", "E2E Group")); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	if err := client.AddGroupMembers(withTimeout(t, 30*time.Second), groupEmail, userEmail); err != nil {
+		t.Fatalf("add group member: %v", err)
+	}
+
+	// u_groups on the user now lists the group address.
+	props, err := client.GetAccountProperties(withTimeout(t, 30*time.Second), userEmail, "u_groups")
+	if err != nil {
+		t.Fatalf("get u_groups: %v", err)
+	}
+	if !strings.Contains(props["u_groups"].Val, groupEmail) {
+		t.Fatalf("u_groups = %q, want it to contain %q", props["u_groups"].Val, groupEmail)
+	}
+
+	// And the repository maps it to the group's local part on the user.
+	u, err := icewarp.NewRepository(client, domain, nil).Get(withTimeout(t, 30*time.Second), userMbx)
+	if err != nil {
+		t.Fatalf("repo get: %v", err)
+	}
+	if !contains(u.Groups, groupMbx) {
+		t.Fatalf("user groups = %v, want it to contain %q", u.Groups, groupMbx)
+	}
+
+	// The forward direction: the group is listed, and its member list contains
+	// the user (drives the LDAP group entries / member attribute).
+	groups, _, err := client.ListGroups(withTimeout(t, 30*time.Second), domain, 0, 0)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if findAccount(groups, groupEmail) == nil {
+		t.Fatalf("list groups: %s not found in %v", groupEmail, emails(groups))
+	}
+	members, _, err := client.GetGroupMembers(withTimeout(t, 30*time.Second), groupEmail, 0, 0)
+	if err != nil {
+		t.Fatalf("get group members: %v", err)
+	}
+	if !contains(members, userEmail) {
+		t.Fatalf("group members = %v, want it to contain %q", members, userEmail)
+	}
+}
+
+func contains(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func findAccount(accounts []icewarp.Account, email string) *icewarp.Account {

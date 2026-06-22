@@ -117,5 +117,26 @@ Configure a Keycloak *User Attribute LDAP mapper* for whichever optional name
 parts (`initials`, `displayName`, `generationQualifier`, `personalTitle`) you
 want; the rest are ignored.
 
+### Groups
+
+The bridge serves IceWarp groups (accounttype 7) read-only as LDAP entries
+(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`), sourced from the
+per-group member list and the per-user `u_groups` property. Groups become entries
+(`cn=<group>,<base>`, `groupOfNames`, `member` = user DNs) and users gain
+`memberOf` (group DNs). Point a Keycloak *Group LDAP Mapper* at the base DN to
+import real Keycloak groups; for a plain group claim, add a *Group Membership*
+protocol mapper on top.
+
+- **Membership resolution** — the mapper's *User Groups Retrieve Strategy* picks
+  the source: `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` (default) searches groups for
+  `member=<userDN>`; `GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE` reads the user's
+  `memberOf` (set *Member-Of LDAP Attribute* = `memberOf`). Either works. A
+  user's group membership is resolved at **sync/login**, not on admin detail
+  view, so trigger a user sync after wiring the mapper.
+- **Read-only** — configure the mapper read-only; a writable group mapper would
+  silently no-op (same as the read-only user-attribute gotcha).
+- **Empty groups** are emitted without a `member` attribute (`groupOfNames`
+  formally requires one); enable "Ignore Missing Groups" if that matters.
+
 The e2e suite in `test/e2e/` exercises the core operations against both a real
 OpenLDAP and the bridge; see `ldap_keycloak_test.go`.

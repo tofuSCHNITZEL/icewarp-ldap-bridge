@@ -36,8 +36,20 @@ type User struct {
 	Email      string
 	Disabled   bool
 
+	// Groups are the user's group memberships as opaque identifiers. They are
+	// read-only: reads populate them, writes ignore them (the bridge never
+	// provisions group membership).
+	Groups []string
+
 	// Password is write-only: set it on Create; reads never populate it.
 	Password string
+}
+
+// Group is a group of users, keyed by Name (the group's mailbox local part,
+// presented as the cn). Members are member usernames (mailbox local parts).
+type Group struct {
+	Name    string
+	Members []string
 }
 
 // Query narrows a List. The fields are pushdown hints — a backend uses them to
@@ -65,4 +77,11 @@ type Repository interface {
 	SetPassword(ctx context.Context, username, password string) error
 	// Delete removes a user, or ErrNotFound.
 	Delete(ctx context.Context, username string) error
+
+	// ListGroups returns all groups. Like List it is lightweight — Members may be
+	// unpopulated; use GroupMembers to resolve a group's members.
+	ListGroups(ctx context.Context) ([]Group, error)
+	// GroupMembers returns the member usernames of one group (empty if the group
+	// has no members), or ErrNotFound if the group doesn't exist.
+	GroupMembers(ctx context.Context, name string) ([]string, error)
 }

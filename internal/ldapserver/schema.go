@@ -27,10 +27,59 @@ type Schema struct {
 	// RDN won't match the entry DN and it issues a rename the bridge can't serve.
 	// When false (default) the uid is the bare mailbox local part.
 	EmailAsUID bool
+
+	// GroupBaseDN, when non-empty, enables serving groups as LDAP entries
+	// ("cn=<group>,<GroupBaseDN>", objectClass groupOfNames) and adds a "memberOf"
+	// attribute (the group DNs) to user entries. Point a Keycloak Group LDAP
+	// mapper at it. Empty disables group entries and memberOf.
+	GroupBaseDN string
 }
 
 // userObjectClasses is the objectClass set every presented user carries.
 var userObjectClasses = []string{"top", "person", "organizationalPerson", "inetOrgPerson"}
+
+// groupObjectClasses is the objectClass set every presented group carries.
+var groupObjectClasses = []string{"top", "groupOfNames"}
+
+func (s Schema) groupDN(name string) string {
+	return "cn=" + name + "," + s.GroupBaseDN
+}
+
+// groupNameFromDN extracts the cn of a group DN directly under GroupBaseDN.
+func (s Schema) groupNameFromDN(dn string) (string, bool) {
+	if s.GroupBaseDN == "" {
+		return "", false
+	}
+	norm := normalizeDN(dn)
+	suffix := "," + normalizeDN(s.GroupBaseDN)
+	if !strings.HasSuffix(norm, suffix) {
+		return "", false
+	}
+	rdn := norm[:len(norm)-len(suffix)]
+	attr, val, ok := strings.Cut(rdn, "=")
+	if !ok || attr != "cn" || val == "" || strings.Contains(val, ",") {
+		return "", false
+	}
+	return val, true
+}
+
+// groupAttrs builds the LDAP attribute map for a group entry (lower-cased keys).
+// member holds the member user DNs (respecting EmailAsUID via userDN).
+func (s Schema) groupAttrs(g users.Group) map[string][]string {
+	a := map[string][]string{
+		"objectclass": groupObjectClasses,
+		"cn":          {g.Name},
+		"entryuuid":   {stableGroupUUID(g.Name)},
+	}
+	if len(g.Members) > 0 {
+		members := make([]string, len(g.Members))
+		for i, m := range g.Members {
+			members[i] = s.userDN(m)
+		}
+		a["member"] = members
+	}
+	return a
+}
 
 func (s Schema) userDN(username string) string {
 	return "uid=" + s.uidValue(username) + "," + s.BaseUserDN
@@ -113,6 +162,15 @@ func (s Schema) attrs(u users.User) map[string][]string {
 	if u.Email != "" {
 		a["mail"] = []string{u.Email}
 	}
+	// memberOf carries the group DNs when group entries are served, for a Keycloak
+	// Group LDAP mapper (memberOf strategy). Read-only.
+	if s.GroupBaseDN != "" && len(u.Groups) > 0 {
+		dns := make([]string, len(u.Groups))
+		for i, g := range u.Groups {
+			dns[i] = s.groupDN(g)
+		}
+		a["memberof"] = dns
+	}
 	return a
 }
 
@@ -170,6 +228,12 @@ func (s Schema) queryFromFilter(filter string) users.Query {
 // the same on every read and across restarts.
 func stableUUID(username string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(username)).String()
+}
+
+// stableGroupUUID derives a deterministic UUID for a group, namespaced so it
+// can't collide with a user's stableUUID.
+func stableGroupUUID(name string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("group:"+name)).String()
 }
 
 func first(vals []string) string {

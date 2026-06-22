@@ -75,6 +75,50 @@ func TestAttrsUID(t *testing.T) {
 	}
 }
 
+func TestGroupSchema(t *testing.T) {
+	const groupBase = "ou=groups,dc=icewarp,dc=local"
+	s := Schema{BaseUserDN: schemaBase, Domain: schemaDomain, GroupBaseDN: groupBase}
+
+	// DN build + parse round-trip.
+	if got := s.groupDN("group1"); got != "cn=group1,"+groupBase {
+		t.Errorf("groupDN: got %q", got)
+	}
+	if name, ok := s.groupNameFromDN("CN=Group1, " + groupBase); !ok || name != "group1" {
+		t.Errorf("groupNameFromDN: got (%q,%v)", name, ok)
+	}
+	if _, ok := s.groupNameFromDN("uid=jdoe," + schemaBase); ok {
+		t.Error("groupNameFromDN matched a user DN")
+	}
+
+	// Group entry attributes: objectClass, cn, member DNs, entryUUID.
+	g := users.Group{Name: "group1", Members: []string{"jdoe", "jane"}}
+	a := s.groupAttrs(g)
+	if got := a["cn"]; len(got) != 1 || got[0] != "group1" {
+		t.Errorf("group cn: %v", got)
+	}
+	if got := a["member"]; len(got) != 2 || got[0] != "uid=jdoe,"+schemaBase || got[1] != "uid=jane,"+schemaBase {
+		t.Errorf("group member DNs: %v", got)
+	}
+	if len(a["entryuuid"]) != 1 || a["entryuuid"][0] == "" {
+		t.Errorf("group entryuuid missing: %v", a["entryuuid"])
+	}
+	// Distinct from a same-named user's UUID.
+	if a["entryuuid"][0] == stableUUID("group1") {
+		t.Error("group entryUUID collides with user UUID")
+	}
+
+	// memberOf on user entries carries the group DNs.
+	u := users.User{Username: "jdoe", Groups: []string{"group1", "public-folders"}}
+	mo := s.attrs(u)["memberof"]
+	if len(mo) != 2 || mo[0] != "cn=group1,"+groupBase || mo[1] != "cn=public-folders,"+groupBase {
+		t.Errorf("memberOf: %v", mo)
+	}
+	// No memberOf when GroupBaseDN is unset.
+	if _, ok := localPartSchema().attrs(u)["memberof"]; ok {
+		t.Error("memberOf emitted without GroupBaseDN")
+	}
+}
+
 func TestQueryFromFilter(t *testing.T) {
 	cases := []struct {
 		name   string

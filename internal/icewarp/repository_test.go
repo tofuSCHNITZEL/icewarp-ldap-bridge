@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"testing"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
@@ -43,6 +44,11 @@ type mockClient struct {
 
 	deleteDomain string
 	deleteEmails []string
+
+	groupAccounts []Account
+	groupTotal    int
+	memberWho     string
+	members       []string
 }
 
 func (m *mockClient) GetAuthToken(_ context.Context, email, password string) (*AuthToken, error) {
@@ -92,6 +98,15 @@ func (m *mockClient) SetAccountCard(_ context.Context, email string, card Accoun
 func (m *mockClient) DeleteAccounts(_ context.Context, domain string, emails ...string) error {
 	m.deleteDomain, m.deleteEmails = domain, emails
 	return nil
+}
+
+func (m *mockClient) ListGroups(_ context.Context, _ string, _, _ int) ([]Account, int, error) {
+	return m.groupAccounts, m.groupTotal, nil
+}
+
+func (m *mockClient) GetGroupMembers(_ context.Context, groupEmail string, _, _ int) ([]string, int, error) {
+	m.memberWho = groupEmail
+	return m.members, len(m.members), nil
 }
 
 func newRepo(client accountAPI) *Repository {
@@ -168,6 +183,34 @@ func TestRepositoryGet(t *testing.T) {
 	}
 	if u.Password != "" {
 		t.Error("get must not return a password")
+	}
+}
+
+func TestRepositoryGetParsesGroups(t *testing.T) {
+	cases := []struct {
+		name string
+		val  string
+		want []string
+	}{
+		{"two groups trailing semicolon", "public-folders@icewarp.local;group1@icewarp.local;", []string{"public-folders", "group1"}},
+		{"single group", "group1@icewarp.local", []string{"group1"}},
+		{"empty", "", nil},
+		{"only separators", ";;", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockClient{getProps: Properties{
+				"a_vcard":  {Card: makeCard("firstname", "John")},
+				"u_groups": {Val: tc.val},
+			}}
+			u, err := newRepo(mock).Get(context.Background(), "jdoe")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if !slices.Equal(u.Groups, tc.want) {
+				t.Errorf("groups: got %v, want %v", u.Groups, tc.want)
+			}
+		})
 	}
 }
 
@@ -442,6 +485,62 @@ func TestListAllCap(t *testing.T) {
 	if len(all) < maxListAccounts || len(all) >= maxListAccounts+len(page) {
 		t.Fatalf("listAll returned %d accounts, want it capped at ~%d", len(all), maxListAccounts)
 	}
+}
+
+func TestRepositoryListGroups(t *testing.T) {
+	mock := &mockClient{
+		groupAccounts: []Account{
+			{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7},
+			{Name: "Public Folders", Email: "public-folders@icewarp.local", AccountType: 7},
+		},
+		groupTotal: 2,
+	}
+	groups, err := newRepo(mock).ListGroups(context.Background())
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(groups) != 2 || groups[0].Name != "group1" || groups[1].Name != "public-folders" {
+		t.Fatalf("groups: got %+v, want names [group1 public-folders]", groups)
+	}
+	// Lightweight: members are not resolved here.
+	if groups[0].Members != nil {
+		t.Errorf("ListGroups should not resolve members: %v", groups[0].Members)
+	}
+}
+
+func TestRepositoryGroupMembers(t *testing.T) {
+	mock := &mockClient{members: []string{"johndoe@icewarp.local", "jane@icewarp.local", "[icewarp.local]"}}
+	got, err := newRepo(mock).GroupMembers(context.Background(), "group1")
+	if err != nil {
+		t.Fatalf("group members: %v", err)
+	}
+	// Addresses → local parts; the "[domain]" token is dropped.
+	if !slices.Equal(got, []string{"johndoe", "jane"}) {
+		t.Fatalf("members: got %v, want [johndoe jane]", got)
+	}
+	if mock.memberWho != "group1@icewarp.local" {
+		t.Errorf("queried group %q, want group1@icewarp.local", mock.memberWho)
+	}
+}
+
+func TestRepositoryGroupMembersNotFound(t *testing.T) {
+	mock := &mockClient{getCardErr: nil}
+	mock.members = nil
+	// Simulate the API rejecting an unknown group via GetGroupMembers.
+	r := newRepo(&groupErrClient{mockClient: mock, err: &APIError{UID: "account_invalid"}})
+	if _, err := r.GroupMembers(context.Background(), "ghost"); !errors.Is(err, users.ErrNotFound) {
+		t.Fatalf("group members (missing): got %v, want ErrNotFound", err)
+	}
+}
+
+// groupErrClient overrides GetGroupMembers to return a fixed error.
+type groupErrClient struct {
+	*mockClient
+	err error
+}
+
+func (c *groupErrClient) GetGroupMembers(_ context.Context, _ string, _, _ int) ([]string, int, error) {
+	return nil, 0, c.err
 }
 
 // TestRepositoryEmailIdempotent: a username that is already a full address is
