@@ -125,6 +125,14 @@ func (s *Server) bind(w *gldap.ResponseWriter, r *gldap.Request) {
 		return
 	}
 	if err := s.repo.Authenticate(context.Background(), username, string(m.Password)); err != nil {
+		// Only a genuine credential rejection is InvalidCredentials (the default).
+		// A backend outage must NOT look like a wrong password, or Keycloak counts
+		// it as a failed login and can brute-force-lock the account; report the
+		// service as unavailable instead.
+		if !errors.Is(err, users.ErrInvalidCredentials) {
+			s.logger.Warn("ldap bind: backend unavailable", "dn", m.UserName, "err", err)
+			resp.SetResultCode(gldap.ResultUnavailable)
+		}
 		return
 	}
 	s.markAuthed(r.ConnectionID())
@@ -205,8 +213,14 @@ func (s *Server) searchUsers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap
 	}
 
 	// Enrich the survivors (names) and emit those that still match once their
-	// full attributes are known.
-	for _, u := range s.enrich(context.Background(), candidates) {
+	// full attributes are known. A backend error fails the whole search rather
+	// than emitting a partial set — a missing entry would otherwise read to
+	// Keycloak as "user deleted" and get the account removed/disabled.
+	enriched, err := s.enrich(context.Background(), candidates)
+	if err != nil {
+		return err
+	}
+	for _, u := range enriched {
 		attrs := s.schema.attrs(u)
 		if !matchFilter(m.Filter, attrs) {
 			continue
@@ -237,7 +251,11 @@ func (s *Server) searchGroups(w *gldap.ResponseWriter, r *gldap.Request, m *glda
 		}
 	}
 
-	for _, g := range s.enrichGroups(context.Background(), candidates) {
+	enriched, err := s.enrichGroups(context.Background(), candidates)
+	if err != nil {
+		return err
+	}
+	for _, g := range enriched {
 		attrs := s.schema.groupAttrs(g)
 		if !matchFilter(m.Filter, attrs) {
 			continue
@@ -269,13 +287,17 @@ func subtreeInRange(container, base string, scope int64) bool {
 const enrichConcurrency = 8
 
 // enrich loads the full record (structured name, etc.) for each candidate via
-// repo.Get, concurrently and bounded. A candidate that no longer exists is
-// dropped silently; any other read error drops it with a warning. Order is not
+// repo.Get, concurrently and bounded. A candidate that no longer exists
+// (ErrNotFound) is dropped silently — it was genuinely deleted. Any other read
+// error (a backend outage) returns an error so the caller fails the search
+// instead of emitting a partial set: a silently-missing entry reads to Keycloak
+// as a deleted user and gets the account removed/disabled. Order is not
 // preserved (LDAP search results are unordered).
-func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.User {
+func (s *Server) enrich(ctx context.Context, candidates []users.User) ([]users.User, error) {
 	sem := make(chan struct{}, enrichConcurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var firstErr error
 	out := make([]users.User, 0, len(candidates))
 	for _, c := range candidates {
 		if ctx.Err() != nil {
@@ -288,9 +310,15 @@ func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.Us
 			defer func() { <-sem }()
 			u, err := s.repo.Get(ctx, username)
 			if err != nil {
-				if !errors.Is(err, users.ErrNotFound) {
-					s.logger.Warn("ldap search: enrich failed, entry skipped", "username", username, "err", err)
+				if errors.Is(err, users.ErrNotFound) {
+					return
 				}
+				s.logger.Warn("ldap search: enrich failed", "username", username, "err", err)
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
 				return
 			}
 			mu.Lock()
@@ -299,16 +327,19 @@ func (s *Server) enrich(ctx context.Context, candidates []users.User) []users.Us
 		}(c.Username)
 	}
 	wg.Wait()
-	return out
+	return out, firstErr
 }
 
 // enrichGroups resolves each candidate group's members via repo.GroupMembers,
-// concurrently and bounded. A group that no longer exists is dropped silently;
-// any other read error drops it with a warning. Order is not preserved.
-func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) []users.Group {
+// concurrently and bounded. A group that no longer exists (ErrNotFound) is
+// dropped silently; any other read error (a backend outage) returns an error so
+// the caller fails the search rather than emitting a partial set. Order is not
+// preserved.
+func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) ([]users.Group, error) {
 	sem := make(chan struct{}, enrichConcurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var firstErr error
 	out := make([]users.Group, 0, len(candidates))
 	for _, c := range candidates {
 		if ctx.Err() != nil {
@@ -321,9 +352,15 @@ func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) []u
 			defer func() { <-sem }()
 			members, err := s.repo.GroupMembers(ctx, name)
 			if err != nil {
-				if !errors.Is(err, users.ErrNotFound) {
-					s.logger.Warn("ldap search: group enrich failed, entry skipped", "group", name, "err", err)
+				if errors.Is(err, users.ErrNotFound) {
+					return
 				}
+				s.logger.Warn("ldap search: group enrich failed", "group", name, "err", err)
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
 				return
 			}
 			mu.Lock()
@@ -332,7 +369,7 @@ func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) []u
 		}(c.Name)
 	}
 	wg.Wait()
-	return out
+	return out, firstErr
 }
 
 func requestedPaging(controls []gldap.Control) bool {

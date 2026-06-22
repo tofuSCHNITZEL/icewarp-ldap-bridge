@@ -2,6 +2,7 @@ package ldapserver
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -158,6 +159,75 @@ func TestModifyCNUpdatesFileas(t *testing.T) {
 	}
 	if u.Fileas != "Johnny D" {
 		t.Fatalf("cn change not persisted: Fileas=%q, want %q", u.Fileas, "Johnny D")
+	}
+}
+
+// flakyRepo simulates an IceWarp outage behind an up bridge: bind/read fail with
+// a non-NotFound backend error. Embedding the interface leaves group methods nil
+// (the tests below don't enable the group subtree).
+type flakyRepo struct {
+	users.Repository
+	authErr   error
+	getErr    error
+	listUsers []users.User
+}
+
+func (f *flakyRepo) Authenticate(_ context.Context, _, password string) error {
+	if f.authErr != nil {
+		return f.authErr
+	}
+	if password != "secret" {
+		return users.ErrInvalidCredentials
+	}
+	return nil
+}
+
+func (f *flakyRepo) List(_ context.Context, _ users.Query) ([]users.User, error) {
+	return f.listUsers, nil
+}
+
+func (f *flakyRepo) Get(_ context.Context, _ string) (users.User, error) {
+	return users.User{}, f.getErr
+}
+
+// TestBindBackendUnavailable: a backend outage must surface as Unavailable, not
+// InvalidCredentials — otherwise Keycloak counts a failed login and can
+// brute-force-lock the account.
+func TestBindBackendUnavailable(t *testing.T) {
+	repo := &flakyRepo{authErr: errors.New("dial tcp: connection refused")}
+	addr := startServer(t, repo)
+
+	err := dial(t, addr).Bind("uid=johndoe,"+testBaseDN, "anything")
+	if err == nil {
+		t.Fatal("expected bind to fail when the backend is unavailable")
+	}
+	if !ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailable) {
+		t.Fatalf("got %v, want Unavailable (52), not InvalidCredentials", err)
+	}
+}
+
+// TestSearchBackendErrorFailsNotEmpty: when enrichment hits a backend outage the
+// search must fail, not return an empty result — an empty result reads to
+// Keycloak as "user deleted" and gets the account removed/disabled.
+func TestSearchBackendErrorFailsNotEmpty(t *testing.T) {
+	repo := &flakyRepo{
+		listUsers: []users.User{{Username: "johndoe", Email: "johndoe@icewarp.local"}},
+		getErr:    errors.New("dial tcp: connection refused"),
+	}
+	addr := startServer(t, repo)
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	_, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: "(uid=johndoe)",
+	})
+	if err == nil {
+		t.Fatal("expected search to fail on backend outage, got success (Keycloak would treat the user as deleted)")
+	}
+	if !ldap.IsErrorWithCode(err, ldap.LDAPResultOperationsError) {
+		t.Fatalf("got %v, want OperationsError", err)
 	}
 }
 
