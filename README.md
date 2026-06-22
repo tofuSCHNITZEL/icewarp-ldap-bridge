@@ -66,7 +66,7 @@ Optional attributes appear only when the source field is non-empty.
 
 | LDAP attribute        | IceWarp source                | notes                                       |
 | --------------------- | ----------------------------- | ------------------------------------------- |
-| `uid`                 | mailbox local part            | username; the RDN                           |
+| `uid`                 | mailbox local part (or primary email with `LDAP_EMAIL_AS_UID`) | username; the RDN |
 | `cn`                  | card `fileas` (→ `u_name`)    | display name; mandatory                     |
 | `givenName`           | card `firstname`              | first name                                  |
 | `sn`                  | card `lastname`               | last name                                   |
