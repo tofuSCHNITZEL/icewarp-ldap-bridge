@@ -410,6 +410,38 @@ func TestRepositorySetPassword(t *testing.T) {
 	}
 }
 
+// listLoopClient simulates a server that ignores the offset and always returns a
+// full page with a total far above the cap — without listAll's cap this loops
+// forever. calls is bounded so a regression fails fast instead of hanging.
+type listLoopClient struct {
+	*mockClient
+	page  []Account
+	calls int
+}
+
+func (c *listLoopClient) ListAccounts(_ context.Context, _, _ string, _, _ int) ([]Account, int, error) {
+	c.calls++
+	if c.calls > maxListAccounts { // far beyond the pages the cap can need
+		return nil, 0, errors.New("listAll did not terminate")
+	}
+	return c.page, maxListAccounts * 10, nil // total never reached by offset
+}
+
+// TestListAllCap: a runaway server can't drive unbounded accumulation; listAll
+// stops at maxListAccounts and returns.
+func TestListAllCap(t *testing.T) {
+	page := make([]Account, 1000)
+	client := &listLoopClient{mockClient: &mockClient{}, page: page}
+
+	all, err := newRepo(client).listAll(context.Background(), "*")
+	if err != nil {
+		t.Fatalf("listAll: %v", err)
+	}
+	if len(all) < maxListAccounts || len(all) >= maxListAccounts+len(page) {
+		t.Fatalf("listAll returned %d accounts, want it capped at ~%d", len(all), maxListAccounts)
+	}
+}
+
 func TestRepositoryDelete(t *testing.T) {
 	mock := &mockClient{}
 	if err := newRepo(mock).Delete(context.Background(), "jdoe"); err != nil {
