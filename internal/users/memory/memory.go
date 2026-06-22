@@ -82,10 +82,16 @@ func (r *Repository) Update(_ context.Context, u users.User) error {
 	if !ok {
 		return users.ErrNotFound
 	}
+	// Mirror exactly the profile fields the LDAP modify path maps (see
+	// ldapserver.Server.modify). Email is intentionally not updated: a primary
+	// address change is an account rename the bridge rejects upstream.
 	existing.Fileas = u.Fileas
 	existing.Firstname = u.Firstname
 	existing.Lastname = u.Lastname
-	existing.Email = u.Email
+	existing.Middlename = u.Middlename
+	existing.Nickname = u.Nickname
+	existing.Suffix = u.Suffix
+	existing.Title = u.Title
 	existing.Disabled = u.Disabled
 	r.users[key(u.Username)] = existing
 	return nil
