@@ -89,6 +89,14 @@ mapper* at the base DN to import them as Keycloak **groups** (hierarchy, role
 mappings); for a plain group claim, add a *Group Membership* protocol mapper on
 top. Set the env var empty to disable groups entirely.
 
+**Use the mapper's `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` retrieve strategy** (the
+Keycloak default). It lines up with IceWarp's native lookups, so no operation
+scans the whole user list. `GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE` also works,
+but it lists a group's members via a user search (`memberOf=<group>`); the bridge
+pushes that down to the group's member list, so the common case stays cheap, yet
+any query that bypasses the pushdown enriches every user — slow on a large
+directory. There is no such pitfall with `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE`.
+
 A group entry (`cn=<group>,<LDAP_GROUP_BASE_DN>`) carries these attributes:
 
 | LDAP attribute | IceWarp source                       | notes                                              |
