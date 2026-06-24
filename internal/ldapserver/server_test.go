@@ -322,6 +322,62 @@ func TestSearchUserSubtreeSkipsGroups(t *testing.T) {
 	}
 }
 
+// TestSearchUsersByMemberOf: browsing a group's members (Keycloak's
+// GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE strategy) searches users by memberOf.
+// memberOf is resolved only during enrichment, so the prefilter must not exclude
+// users that lack it in the cheap List form — otherwise the group reads as empty.
+func TestSearchUsersByMemberOf(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret", Groups: []string{"group1"}})
+	repo.Seed(users.User{Username: "jane", Email: "jane@icewarp.local"})
+	repo.SeedGroup("group1", "johndoe")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(memberOf=cn=group1," + testGroupBaseDN + ")(objectClass=inetOrgPerson))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "johndoe" {
+		t.Fatalf("memberOf search returned %d entries, want just johndoe", len(res.Entries))
+	}
+}
+
+// TestSearchGroupsByMember: showing a user's groups (Keycloak's
+// LOAD_GROUPS_BY_MEMBER_ATTRIBUTE strategy) searches groups by member. member is
+// resolved only during enrichment, so the prefilter must not exclude groups that
+// lack it in the cheap ListGroups form — otherwise the user shows no groups.
+func TestSearchGroupsByMember(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	repo.SeedGroup("group1", "johndoe")
+	repo.SeedGroup("group2", "jane")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testGroupBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(member=uid=johndoe," + testBaseDN + ")(objectClass=groupOfNames))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].DN != "cn=group1,"+testGroupBaseDN {
+		t.Fatalf("member search returned %d entries, want just group1", len(res.Entries))
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {
