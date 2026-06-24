@@ -68,7 +68,7 @@ func (r *Repository) List(_ context.Context, q users.Query) ([]users.User, error
 		if q.UsernamePrefix != "" && !strings.HasPrefix(key(u.Username), key(q.UsernamePrefix)) {
 			continue
 		}
-		out = append(out, public(u))
+		out = append(out, lightweight(u))
 	}
 	return out, nil
 }
@@ -152,5 +152,15 @@ func key(username string) string { return strings.ToLower(username) }
 // public returns a copy with the password cleared (reads never leak it).
 func public(u users.User) users.User {
 	u.Password = ""
+	return u
+}
+
+// lightweight returns the candidate form List yields: like public but with the
+// group memberships dropped, mirroring the IceWarp backend whose listing call is
+// cheap and resolves Groups (u_groups) only on a per-user Get. The ldapserver
+// prefilter must not assume memberOf is known at this stage.
+func lightweight(u users.User) users.User {
+	u = public(u)
+	u.Groups = nil
 	return u
 }

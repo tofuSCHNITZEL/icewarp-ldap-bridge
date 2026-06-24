@@ -224,6 +224,45 @@ func (s Schema) queryFromFilter(filter string) users.Query {
 	}
 }
 
+// groupFromMemberOfFilter extracts a membership pushdown hint: the group name
+// from a "(memberOf=<groupDN>)" assertion, when the DN names a group under
+// GroupBaseDN. It lets a "members of group X" search (Keycloak's
+// GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE strategy) resolve X's members in one
+// backend call instead of enumerating and enriching every user.
+//
+// Seeding candidates from the group's members is only sound when the memberOf
+// assertion is a required conjunct, so its members are a superset of the result
+// the full filter then narrows. We require that the filter be a pure conjunction
+// — no OR, no NOT — which guarantees it: under "|" the term may be optional and
+// under "!" negated, either of which would drop valid matches. Anything else
+// (including a wildcard value, which can't name one group) is declined, and the
+// caller falls back to enumeration, which always filters correctly.
+func (s Schema) groupFromMemberOfFilter(filter string) (string, bool) {
+	if s.GroupBaseDN == "" {
+		return "", false
+	}
+	// Operators sit immediately after "(" (see parseFilter), so a substring check
+	// reliably spots an OR/NOT anywhere in the filter.
+	if strings.Contains(filter, "(|") || strings.Contains(filter, "(!") {
+		return "", false
+	}
+	const key = "(memberof="
+	i := strings.Index(strings.ToLower(filter), key)
+	if i < 0 {
+		return "", false
+	}
+	rest := filter[i+len(key):]
+	end := strings.IndexByte(rest, ')')
+	if end < 0 {
+		return "", false
+	}
+	dn := strings.TrimSpace(rest[:end])
+	if dn == "" || strings.Contains(dn, "*") {
+		return "", false
+	}
+	return s.groupNameFromDN(dn)
+}
+
 // stableUUID derives a deterministic UUID from a username, so a user's id is
 // the same on every read and across restarts.
 func stableUUID(username string) string {

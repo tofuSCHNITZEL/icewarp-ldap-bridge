@@ -322,11 +322,100 @@ func TestSearchUserSubtreeSkipsGroups(t *testing.T) {
 	}
 }
 
+// TestSearchUsersByMemberOf: browsing a group's members (Keycloak's
+// GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE strategy) searches users by memberOf.
+// memberOf is resolved only during enrichment, so the prefilter must not exclude
+// users that lack it in the cheap List form — otherwise the group reads as empty.
+func TestSearchUsersByMemberOf(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret", Groups: []string{"group1"}})
+	repo.Seed(users.User{Username: "jane", Email: "jane@icewarp.local"})
+	repo.SeedGroup("group1", "johndoe")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(memberOf=cn=group1," + testGroupBaseDN + ")(objectClass=inetOrgPerson))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "johndoe" {
+		t.Fatalf("memberOf search returned %d entries, want just johndoe", len(res.Entries))
+	}
+}
+
+// TestSearchGroupsByMember: showing a user's groups (Keycloak's
+// LOAD_GROUPS_BY_MEMBER_ATTRIBUTE strategy) searches groups by member. member is
+// resolved only during enrichment, so the prefilter must not exclude groups that
+// lack it in the cheap ListGroups form — otherwise the user shows no groups.
+func TestSearchGroupsByMember(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	repo.SeedGroup("group1", "johndoe")
+	repo.SeedGroup("group2", "jane")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testGroupBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(member=uid=johndoe," + testBaseDN + ")(objectClass=groupOfNames))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].DN != "cn=group1,"+testGroupBaseDN {
+		t.Fatalf("member search returned %d entries, want just group1", len(res.Entries))
+	}
+}
+
+// TestSearchUsersByMemberOfInOrKeepsAllMatches guards the pushdown: when
+// memberOf is not a required conjunct (here under an OR), seeding candidates from
+// the group's members would drop the other branch's matches. The pushdown must
+// decline and fall back to enumeration so every match still surfaces.
+func TestSearchUsersByMemberOfInOrKeepsAllMatches(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "carol", Email: "carol@icewarp.local", Password: "secret", Groups: []string{"group1"}})
+	repo.Seed(users.User{Username: "bob", Email: "bob@icewarp.local"}) // not in group1
+	repo.SeedGroup("group1", "carol")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=carol,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(|(memberOf=cn=group1," + testGroupBaseDN + ")(mail=bob@icewarp.local))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := map[string]bool{}
+	for _, e := range res.Entries {
+		got[e.GetAttributeValue("uid")] = true
+	}
+	if !got["carol"] || !got["bob"] || len(got) != 2 {
+		t.Fatalf("got uids %v, want carol (via memberOf) and bob (via mail)", got)
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {
 	users.Repository // unused methods (Create/Update/…) panic if called
 	list             []users.User
+	groupMembers     map[string][]string // group name -> member usernames
 	gets             int32
 }
 
@@ -349,6 +438,13 @@ func (c *countingRepo) Get(_ context.Context, username string) (users.User, erro
 		}
 	}
 	return users.User{}, users.ErrNotFound
+}
+
+func (c *countingRepo) GroupMembers(_ context.Context, name string) ([]string, error) {
+	if m, ok := c.groupMembers[name]; ok {
+		return m, nil
+	}
+	return nil, users.ErrNotFound
 }
 
 // TestSearchEnrichesOnlyMatches is the call-volume regression: an entryUUID
@@ -380,5 +476,40 @@ func TestSearchEnrichesOnlyMatches(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&repo.gets); got != 1 {
 		t.Fatalf("enriched %d users for a single-match search, want 1", got)
+	}
+}
+
+// TestSearchUsersByMemberOfPushesDown is the call-volume regression for the
+// membership pushdown: listing a group's members (a memberOf user search) must
+// resolve the group's member list and enrich only those, not every user in the
+// directory.
+func TestSearchUsersByMemberOfPushesDown(t *testing.T) {
+	repo := &countingRepo{groupMembers: map[string][]string{"group1": {"carol"}}}
+	for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank"} {
+		u := users.User{Username: name, Email: name + "@icewarp.local"}
+		if name == "carol" {
+			u.Groups = []string{"group1"}
+		}
+		repo.list = append(repo.list, u)
+	}
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=carol,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(memberOf=cn=group1," + testGroupBaseDN + ")(objectClass=inetOrgPerson))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "carol" {
+		t.Fatalf("search returned %d entries, want just carol", len(res.Entries))
+	}
+	if got := atomic.LoadInt32(&repo.gets); got != 1 {
+		t.Fatalf("enriched %d users for a group-member search, want 1 (pushed down to the group's members)", got)
 	}
 }

@@ -130,9 +130,11 @@ protocol mapper on top.
 - **Membership resolution** — the mapper's *User Groups Retrieve Strategy* picks
   the source: `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` (default) searches groups for
   `member=<userDN>`; `GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE` reads the user's
-  `memberOf` (set *Member-Of LDAP Attribute* = `memberOf`). Either works. A
-  user's group membership is resolved at **sync/login**, not on admin detail
-  view, so trigger a user sync after wiring the mapper.
+  `memberOf` (set *Member-Of LDAP Attribute* = `memberOf`). Prefer
+  `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` — it maps onto IceWarp's native lookups and
+  never scans the whole user list (see the README *Groups* section). A user's
+  group membership is resolved at **sync/login**, not on admin detail view, so
+  trigger a user sync after wiring the mapper.
 - **Read-only** — configure the mapper read-only; a writable group mapper would
   silently no-op (same as the read-only user-attribute gotcha).
 - **Empty groups** are emitted without a `member` attribute (`groupOfNames`
