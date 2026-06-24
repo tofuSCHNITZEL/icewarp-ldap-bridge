@@ -381,9 +381,9 @@ func localPart(email string) string {
 }
 
 // a_vcard (TAccountCard) field names the bridge maps onto LDAP attributes:
-// firstname -> givenName, lastname -> sn, middlename -> initials,
-// nickname -> displayName, suffix -> generationQualifier,
-// title -> personalTitle, fileas ("Display as") -> cn.
+// firstname -> givenName, lastname -> sn, middlename -> middlename,
+// nickname -> nickname, suffix -> suffix, title -> personalTitle,
+// fileas ("Display as") -> cn.
 const (
 	cardFirstname  = "firstname"
 	cardLastname   = "lastname"

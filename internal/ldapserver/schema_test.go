@@ -75,6 +75,43 @@ func TestAttrsUID(t *testing.T) {
 	}
 }
 
+// TestAttrsNameParts pins the LDAP attribute names for the optional name parts.
+// They mirror the IceWarp card fields (middlename/nickname/suffix) rather than the
+// loosely-matching inetOrgPerson attributes that used to carry them
+// (initials/displayName/generationQualifier); the honorific keeps the standard
+// name personalTitle. A regression here would silently break the realm mappers.
+func TestAttrsNameParts(t *testing.T) {
+	u := users.User{
+		Username: "jdoe", Email: "jdoe@icewarp.local", Fileas: "John Doe",
+		Firstname: "John", Lastname: "Doe", Middlename: "Quincy",
+		Nickname: "Johnny", Suffix: "Jr", Title: "Dr",
+	}
+	a := localPartSchema().attrs(u)
+
+	want := map[string]string{
+		"cn": "John Doe", "givenname": "John", "sn": "Doe",
+		"middlename": "Quincy", "nickname": "Johnny", "suffix": "Jr",
+		"personaltitle": "Dr", "mail": "jdoe@icewarp.local",
+	}
+	for k, v := range want {
+		if got := a[k]; len(got) != 1 || got[0] != v {
+			t.Errorf("attr %q: got %v, want [%q]", k, got, v)
+		}
+	}
+	// The old, pre-rename attribute names must not be emitted.
+	for _, k := range []string{"initials", "displayname", "generationqualifier"} {
+		if _, ok := a[k]; ok {
+			t.Errorf("stale attribute %q still emitted", k)
+		}
+	}
+
+	// Round-trip: userFromAttrs reads the same names back.
+	got := userFromAttrs(u.Username, a)
+	if got.Middlename != "Quincy" || got.Nickname != "Johnny" || got.Suffix != "Jr" || got.Title != "Dr" {
+		t.Errorf("round-trip name parts: %+v", got)
+	}
+}
+
 func TestGroupSchema(t *testing.T) {
 	const groupBase = "ou=groups,dc=icewarp,dc=local"
 	s := Schema{BaseUserDN: schemaBase, Domain: schemaDomain, GroupBaseDN: groupBase}

@@ -497,11 +497,11 @@ func (s *Server) modify(w *gldap.ResponseWriter, r *gldap.Request) {
 			u.Firstname, profileChanged = val, true
 		case "sn":
 			u.Lastname, profileChanged = val, true
-		case "initials":
+		case "middlename":
 			u.Middlename, profileChanged = val, true
-		case "displayname":
+		case "nickname":
 			u.Nickname, profileChanged = val, true
-		case "generationqualifier":
+		case "suffix":
 			u.Suffix, profileChanged = val, true
 		case "personaltitle":
 			u.Title, profileChanged = val, true

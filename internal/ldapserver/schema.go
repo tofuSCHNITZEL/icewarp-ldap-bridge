@@ -145,16 +145,20 @@ func (s Schema) attrs(u users.User) map[string][]string {
 	if u.Lastname != "" {
 		a["sn"] = []string{u.Lastname}
 	}
-	// Optional name parts from the IceWarp card. Emitted only when present;
-	// Keycloak decides via its mappers whether to consume them.
+	// Optional name parts, named to mirror the IceWarp card fields
+	// (middlename/nickname/suffix) rather than forcing them onto loosely-matching
+	// inetOrgPerson attributes (initials/displayName/generationQualifier). The
+	// honorific keeps the standard name personalTitle, because LDAP "title" means
+	// job title. Emitted only when present; a Keycloak User Attribute mapper
+	// consumes each by name.
 	if u.Middlename != "" {
-		a["initials"] = []string{u.Middlename}
+		a["middlename"] = []string{u.Middlename}
 	}
 	if u.Nickname != "" {
-		a["displayname"] = []string{u.Nickname}
+		a["nickname"] = []string{u.Nickname}
 	}
 	if u.Suffix != "" {
-		a["generationqualifier"] = []string{u.Suffix}
+		a["suffix"] = []string{u.Suffix}
 	}
 	if u.Title != "" {
 		a["personaltitle"] = []string{u.Title}
@@ -182,9 +186,9 @@ func userFromAttrs(username string, attrs map[string][]string) users.User {
 		Fileas:     first(a["cn"]),
 		Firstname:  first(a["givenname"]),
 		Lastname:   first(a["sn"]),
-		Middlename: first(a["initials"]),
-		Nickname:   first(a["displayname"]),
-		Suffix:     first(a["generationqualifier"]),
+		Middlename: first(a["middlename"]),
+		Nickname:   first(a["nickname"]),
+		Suffix:     first(a["suffix"]),
 		Title:      first(a["personaltitle"]),
 		Email:      first(a["mail"]),
 		Password:   first(a["userpassword"]),

@@ -68,7 +68,11 @@ is unaffected, so the toggle doesn't re-link existing users.
 Each entry carries these attributes (lower-cased on the wire). The name parts come
 from the IceWarp `a_vcard` contact card and are **read/write** — in Keycloak, add
 a *User Attribute LDAP mapper* for whichever you want; the rest are ignored.
-Optional attributes appear only when the source field is non-empty.
+Optional attributes appear only when the source field is non-empty. The optional
+name parts use the IceWarp field names (`middlename`/`nickname`/`suffix`) rather
+than near-equivalent inetOrgPerson attributes, so each mapper is a 1:1 pass-through;
+the standard `givenName`/`sn`/`cn`/`mail`/`uid` set is kept for the load-bearing
+fields.
 
 | LDAP attribute        | IceWarp source                | notes                                       |
 | --------------------- | ----------------------------- | ------------------------------------------- |
@@ -76,10 +80,10 @@ Optional attributes appear only when the source field is non-empty.
 | `cn`                  | card `fileas` (→ `u_name`)    | display name; mandatory                     |
 | `givenName`           | card `firstname`              | first name                                  |
 | `sn`                  | card `lastname`               | last name                                   |
-| `initials`            | card `middlename`             | middle name (optional)                      |
-| `displayName`         | card `nickname`               | nickname (optional)                         |
-| `generationQualifier` | card `suffix`                 | name suffix, e.g. Jr/III (optional)         |
-| `personalTitle`       | card `title`                  | honorific, e.g. Herr/Dr (optional)          |
+| `middlename`          | card `middlename`             | middle name (optional)                      |
+| `nickname`            | card `nickname`               | nickname (optional)                         |
+| `suffix`              | card `suffix`                 | name suffix, e.g. Jr/III (optional)         |
+| `personalTitle`       | card `title`                  | honorific, e.g. Herr/Dr (optional); standard name kept — LDAP `title` means *job* title |
 | `mail`                | primary address               | **rejected on modify** (rename unsupported) |
 | `memberOf`            | `u_groups` (group DNs)        | group memberships as group DNs, multi-valued; **read-only**; present when `LDAP_GROUP_BASE_DN` is set |
 | `userPassword`        | `getauthtoken` / `setaccountpassword` | write-only (bind / password set)    |
