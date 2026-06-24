@@ -224,6 +224,38 @@ func (s Schema) queryFromFilter(filter string) users.Query {
 	}
 }
 
+// groupFromMemberOfFilter extracts a membership pushdown hint: the group name
+// from a "(memberOf=<groupDN>)" assertion, when the DN names a group under
+// GroupBaseDN. It lets a "members of group X" search (Keycloak's
+// GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE strategy) resolve X's members in one
+// backend call instead of enumerating and enriching every user.
+//
+// Like queryFromFilter it is best-effort, with the same caveat: it assumes the
+// memberOf assertion is a required conjunct (Keycloak sends it as the top-level
+// AND term it is), so the group's members are a superset of the result the full
+// filter then narrows. A wildcard value can't name one group, so it is declined
+// (the caller falls back to enumeration, which still filters correctly).
+func (s Schema) groupFromMemberOfFilter(filter string) (string, bool) {
+	if s.GroupBaseDN == "" {
+		return "", false
+	}
+	const key = "(memberof="
+	i := strings.Index(strings.ToLower(filter), key)
+	if i < 0 {
+		return "", false
+	}
+	rest := filter[i+len(key):]
+	end := strings.IndexByte(rest, ')')
+	if end < 0 {
+		return "", false
+	}
+	dn := strings.TrimSpace(rest[:end])
+	if dn == "" || strings.Contains(dn, "*") {
+		return "", false
+	}
+	return s.groupNameFromDN(dn)
+}
+
 // stableUUID derives a deterministic UUID from a username, so a user's id is
 // the same on every read and across restarts.
 func stableUUID(username string) string {

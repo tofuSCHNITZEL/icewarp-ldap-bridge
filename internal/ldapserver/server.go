@@ -205,7 +205,7 @@ var (
 
 // searchUsers emits the user entries matching the search.
 func (s *Server) searchUsers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) error {
-	list, err := s.repo.List(context.Background(), s.schema.queryFromFilter(m.Filter))
+	list, err := s.userCandidates(context.Background(), m.Filter)
 	if err != nil {
 		return err
 	}
@@ -241,6 +241,31 @@ func (s *Server) searchUsers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap
 		_ = w.Write(r.NewSearchResponseEntry(s.schema.userDN(u.Username), gldap.WithAttributes(attrs)))
 	}
 	return nil
+}
+
+// userCandidates returns the lightweight candidate users a search will prefilter
+// and enrich. A "(memberOf=<groupDN>)" filter — Keycloak listing a group's
+// members under GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE — is pushed down to the
+// group's own member list, one backend call, instead of enumerating every user
+// just to read each one's memberOf. An unknown group yields no candidates; any
+// other filter falls back to the username-hinted List. Candidates carry only the
+// username; enrich loads the rest (and the exact filter runs after).
+func (s *Server) userCandidates(ctx context.Context, filter string) ([]users.User, error) {
+	if group, ok := s.schema.groupFromMemberOfFilter(filter); ok {
+		members, err := s.repo.GroupMembers(ctx, group)
+		if err != nil {
+			if errors.Is(err, users.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		out := make([]users.User, len(members))
+		for i, name := range members {
+			out[i] = users.User{Username: name}
+		}
+		return out, nil
+	}
+	return s.repo.List(ctx, s.schema.queryFromFilter(filter))
 }
 
 // searchGroups emits the group entries matching the search. Like the user flow

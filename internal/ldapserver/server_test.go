@@ -383,6 +383,7 @@ func TestSearchGroupsByMember(t *testing.T) {
 type countingRepo struct {
 	users.Repository // unused methods (Create/Update/…) panic if called
 	list             []users.User
+	groupMembers     map[string][]string // group name -> member usernames
 	gets             int32
 }
 
@@ -405,6 +406,13 @@ func (c *countingRepo) Get(_ context.Context, username string) (users.User, erro
 		}
 	}
 	return users.User{}, users.ErrNotFound
+}
+
+func (c *countingRepo) GroupMembers(_ context.Context, name string) ([]string, error) {
+	if m, ok := c.groupMembers[name]; ok {
+		return m, nil
+	}
+	return nil, users.ErrNotFound
 }
 
 // TestSearchEnrichesOnlyMatches is the call-volume regression: an entryUUID
@@ -436,5 +444,40 @@ func TestSearchEnrichesOnlyMatches(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&repo.gets); got != 1 {
 		t.Fatalf("enriched %d users for a single-match search, want 1", got)
+	}
+}
+
+// TestSearchUsersByMemberOfPushesDown is the call-volume regression for the
+// membership pushdown: listing a group's members (a memberOf user search) must
+// resolve the group's member list and enrich only those, not every user in the
+// directory.
+func TestSearchUsersByMemberOfPushesDown(t *testing.T) {
+	repo := &countingRepo{groupMembers: map[string][]string{"group1": {"carol"}}}
+	for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank"} {
+		u := users.User{Username: name, Email: name + "@icewarp.local"}
+		if name == "carol" {
+			u.Groups = []string{"group1"}
+		}
+		repo.list = append(repo.list, u)
+	}
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=carol,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(&(memberOf=cn=group1," + testGroupBaseDN + ")(objectClass=inetOrgPerson))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "carol" {
+		t.Fatalf("search returned %d entries, want just carol", len(res.Entries))
+	}
+	if got := atomic.LoadInt32(&repo.gets); got != 1 {
+		t.Fatalf("enriched %d users for a group-member search, want 1 (pushed down to the group's members)", got)
 	}
 }
