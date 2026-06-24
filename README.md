@@ -44,6 +44,12 @@ dev stack):
 Logging is `log/slog` to stderr. At `debug` the server logs one line per incoming
 LDAP request and one per outgoing IceWarp RPC call.
 
+**No create/modify timestamps — use full sync.** IceWarp exposes no account
+creation or modification time the bridge can serve (see `docs/icewarp.md`), so
+entries carry no `createTimestamp`/`modifyTimestamp`. Keycloak's *Periodic Changed
+Users Sync* relies on `modifyTimestamp` to find changed accounts and would sync
+nothing — configure the LDAP federation with **Periodic Full Sync** instead.
+
 ### Attribute mapping
 
 The bridge serves a fixed schema of user and group entries (no other container

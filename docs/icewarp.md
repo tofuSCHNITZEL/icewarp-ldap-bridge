@@ -200,8 +200,16 @@ for arbitrary `u_*` properties; `setaccountpassword` (`accountemail`,
 `ignorepolicy`, `password`) for password changes. Create/delete via
 `createaccount` / `deleteaccounts`.
 
-**No timestamps.** None of these expose an account create- or modify-time — not
-`getaccountsinfolist`, `getaccountproperties`, nor the `a_vcard` card.
+**No usable account create/modify time.** The admin API exposes no timestamp on
+any account surface — the property model has no date field at all.
+
+The webmail WebClient API does return `ITM_CREATED` / `ITM_MODIFIED`, but on a
+user's contact card, not the account: the modified time bumps on any card
+edit/sync and not on account changes (password, enable/disable), so it is a poor
+proxy for create/modify. And the bridge can't read it regardless — every webmail
+session needs the user's own password, which the bridge never holds (it only
+validates passwords at bind and discards them). The admin "open webmail" path
+opens the admin's own mailbox and can't impersonate a user. **Not usable.**
 
 ## Dev test account
 
