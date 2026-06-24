@@ -46,7 +46,7 @@ LDAP request and one per outgoing IceWarp RPC call.
 
 ### Attribute mapping
 
-The bridge serves a fixed, **users-only** schema (no groups, no container
+The bridge serves a fixed schema of user and group entries (no other container
 entries): each account is one entry at `uid=<username>,<LDAP_USER_BASE_DN>` (e.g.
 `uid=jdoe,ou=people,dc=icewarp,dc=local`) with objectClasses `top`, `person`,
 `organizationalPerson`, `inetOrgPerson`. The `uid` RDN is the key — on the IceWarp
