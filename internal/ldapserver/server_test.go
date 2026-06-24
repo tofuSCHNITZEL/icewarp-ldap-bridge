@@ -378,6 +378,38 @@ func TestSearchGroupsByMember(t *testing.T) {
 	}
 }
 
+// TestSearchUsersByMemberOfInOrKeepsAllMatches guards the pushdown: when
+// memberOf is not a required conjunct (here under an OR), seeding candidates from
+// the group's members would drop the other branch's matches. The pushdown must
+// decline and fall back to enumeration so every match still surfaces.
+func TestSearchUsersByMemberOfInOrKeepsAllMatches(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "carol", Email: "carol@icewarp.local", Password: "secret", Groups: []string{"group1"}})
+	repo.Seed(users.User{Username: "bob", Email: "bob@icewarp.local"}) // not in group1
+	repo.SeedGroup("group1", "carol")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=carol,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN,
+		Scope:  ldap.ScopeWholeSubtree,
+		Filter: "(|(memberOf=cn=group1," + testGroupBaseDN + ")(mail=bob@icewarp.local))",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	got := map[string]bool{}
+	for _, e := range res.Entries {
+		got[e.GetAttributeValue("uid")] = true
+	}
+	if !got["carol"] || !got["bob"] || len(got) != 2 {
+		t.Fatalf("got uids %v, want carol (via memberOf) and bob (via mail)", got)
+	}
+}
+
 // countingRepo returns a fixed lightweight list and counts per-user Get calls,
 // so a test can assert how many entries the search handler enriches.
 type countingRepo struct {

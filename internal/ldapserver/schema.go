@@ -230,13 +230,20 @@ func (s Schema) queryFromFilter(filter string) users.Query {
 // GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE strategy) resolve X's members in one
 // backend call instead of enumerating and enriching every user.
 //
-// Like queryFromFilter it is best-effort, with the same caveat: it assumes the
-// memberOf assertion is a required conjunct (Keycloak sends it as the top-level
-// AND term it is), so the group's members are a superset of the result the full
-// filter then narrows. A wildcard value can't name one group, so it is declined
-// (the caller falls back to enumeration, which still filters correctly).
+// Seeding candidates from the group's members is only sound when the memberOf
+// assertion is a required conjunct, so its members are a superset of the result
+// the full filter then narrows. We require that the filter be a pure conjunction
+// — no OR, no NOT — which guarantees it: under "|" the term may be optional and
+// under "!" negated, either of which would drop valid matches. Anything else
+// (including a wildcard value, which can't name one group) is declined, and the
+// caller falls back to enumeration, which always filters correctly.
 func (s Schema) groupFromMemberOfFilter(filter string) (string, bool) {
 	if s.GroupBaseDN == "" {
+		return "", false
+	}
+	// Operators sit immediately after "(" (see parseFilter), so a substring check
+	// reliably spots an OR/NOT anywhere in the filter.
+	if strings.Contains(filter, "(|") || strings.Contains(filter, "(!") {
 		return "", false
 	}
 	const key = "(memberof="
