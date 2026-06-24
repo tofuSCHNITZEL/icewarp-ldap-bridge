@@ -1,9 +1,9 @@
-# Keycloak LDAP federation (what the bridge must serve)
+# Keycloak LDAP federation
 
 What Keycloak's **LDAP User Federation** provider sends over the wire, and the
 minimum an LDAP server must implement to be a working federation source for it.
-Gathered by reading Keycloak's source; scope is the bridge, not a full
-reference.
+Gathered by reading Keycloak's source; scope is the common read + authenticate
+(and write-back) setup, not a full reference.
 
 Source (in the gitignored `keycloak/` reference checkout):
 
@@ -81,64 +81,3 @@ For write-back (sync to LDAP / provisioning) additionally:
 5. **Add**, **Modify** (`REPLACE`/`ADD`/`REMOVE`), and **Delete**.
 6. **Password update** via `REPLACE userPassword`.
 7. **ModifyDN** if usernames (RDNs) can change.
-
-## How this maps to the bridge
-
-The bridge is built on `gldap`, which covers bind, search, add, modify and
-delete — all the core operations above. Four gaps to be aware of:
-
-- **No ModifyDN or Compare routes** in `gldap` v0.1.14, so the bridge cannot
-  serve a rename. Keycloak only renames on RDN changes; configuring the RDN to
-  a stable attribute avoids it. If Keycloak has **"Use email as username"**
-  enabled it expects the RDN to be the email — set `LDAP_EMAIL_AS_UID` so the
-  bridge's `uid`/RDN matches and no rename is attempted.
-- **Search filters are matched on identity attributes** (`uid`, `mail`,
-  `objectClass`, `entryUUID`). The structured name lives in each account's
-  `a_vcard` card, which the bridge reads only for the entries a search actually
-  returns — not for every account on every search (so a single-user lookup
-  doesn't read the whole directory's cards). A filter on a name-only attribute
-  (`sn`, `givenName`, …) therefore won't match server-side; Keycloak filters
-  only on identity attributes, so this isn't a limitation for it.
-- **Paged results** are advertised in our Root DSE, but the server returns the
-  full result set in a single response. go-ldap's `SearchWithPaging` aggregates
-  and stops cleanly, so paged clients still get every entry.
-- **No `createTimestamp` / `modifyTimestamp`.** The IceWarp admin RPC exposes no
-  account create/modify time (not in `getaccountsinfolist`, `getaccountproperties`,
-  or the `a_vcard` card), so the bridge can't emit those operational attributes.
-  Keycloak auto-creates "creation date" and "modification date" mappers — delete
-  or ignore them; they resolve to nothing. More importantly, **"Sync changed
-  users" depends on `modifyTimestamp`** and so can't work — use **"Sync all
-  users"** instead. (Faking a value is worse: `modifyTimestamp = now` would make
-  every sync think all users changed.)
-
-The attributes each entry exposes — and which IceWarp `a_vcard` field backs
-each — are documented in the [README attribute-mapping table](../README.md#attribute-mapping).
-Configure a Keycloak *User Attribute LDAP mapper* for whichever optional name
-parts (`initials`, `displayName`, `generationQualifier`, `personalTitle`) you
-want; the rest are ignored.
-
-### Groups
-
-The bridge serves IceWarp groups (accounttype 7) read-only as LDAP entries
-(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`), sourced from the
-per-group member list and the per-user `u_groups` property. Groups become entries
-(`cn=<group>,<base>`, `groupOfNames`, `member` = user DNs) and users gain
-`memberOf` (group DNs). Point a Keycloak *Group LDAP Mapper* at the base DN to
-import real Keycloak groups; for a plain group claim, add a *Group Membership*
-protocol mapper on top.
-
-- **Membership resolution** — the mapper's *User Groups Retrieve Strategy* picks
-  the source: `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` (default) searches groups for
-  `member=<userDN>`; `GET_GROUPS_FROM_USER_MEMBEROF_ATTRIBUTE` reads the user's
-  `memberOf` (set *Member-Of LDAP Attribute* = `memberOf`). Prefer
-  `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` — it maps onto IceWarp's native lookups and
-  never scans the whole user list (see the README *Groups* section). A user's
-  group membership is resolved at **sync/login**, not on admin detail view, so
-  trigger a user sync after wiring the mapper.
-- **Read-only** — configure the mapper read-only; a writable group mapper would
-  silently no-op (same as the read-only user-attribute gotcha).
-- **Empty groups** are emitted without a `member` attribute (`groupOfNames`
-  formally requires one); enable "Ignore Missing Groups" if that matters.
-
-The e2e suite in `test/e2e/` exercises the core operations against both a real
-OpenLDAP and the bridge; see `ldap_keycloak_test.go`.

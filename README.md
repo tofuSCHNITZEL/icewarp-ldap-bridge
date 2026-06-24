@@ -114,8 +114,6 @@ the Keycloak mapper read-only.
 add/modify/delete, and a Root DSE advertising paged results. ModifyDN/rename and
 Compare are not supported (the underlying `gldap` server has no routes for them).
 
-See [docs/keycloak.md](docs/keycloak.md) for Keycloak-specific federation notes
-(sync modes, the missing create/modify timestamps).
 
 ## Development
 

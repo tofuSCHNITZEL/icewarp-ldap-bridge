@@ -1,8 +1,8 @@
 # IceWarp (dev stack notes)
 
 Learnings about the IceWarp Server image and its `tool` CLI, gathered while
-working the local dev stack. Scope is what we need for the bridge and the OIDC
-feasibility work, not a full product reference.
+working the local dev stack. Scope is this image's admin and integration
+surface, not a full product reference.
 
 ## The image
 
@@ -16,8 +16,7 @@ feasibility work, not a full product reference.
   `/opt/icewarp-data` (`path.dat`, `status/`, mail store).
 - Backing store is MariaDB (`icewarp-mariadb` service), not the bundled SQLite.
 - The entrypoint waits for the **Laforge** document-preview service on startup
-  and can't be told to skip it, so Laforge runs even though the bridge never
-  uses previews.
+  and can't be told to skip it, so Laforge runs even if you never use previews.
 - In our compose file, container port 80 is published on `localhost:8081`
   (web admin / webmail / REST API) and 443 on `8443`.
 
@@ -136,27 +135,25 @@ Probed against the running on-prem image (`14.3.0.3`). Codes below are from
   **501 Not Implemented** — proper `POST /oauth/token` grant, `GET
   /oauth/authorize?...`, userinfo, jwks, all of them. A random path like
   `/zzz` returns 404, so `/oauth` is a *reserved-but-inert* prefix, not just
-  missing. Treat IceWarp-as-OIDC-IdP as **not usable on this build** (relevant
-  to issue 2 / Option A — pushes toward the LDAP bridge in issue 3). It may be
+  missing. Treat IceWarp-as-OIDC-IdP as **not usable on this build**. It may be
   license/edition-gated; not confirmed.
 
 ### What is available
 
-1. **HTTP admin RPC at `/icewarpapi/`** — the remotely callable API, and the
-   right integration target for the bridge. It's the same XML-RPC the web admin
-   console uses: POST `<iq>` stanzas in the `admin:iq:rpc` namespace, each
-   carrying a `<commandname>` + `<commandparams>`. **No SSH or co-location
-   needed** — any HTTP(S) client with admin credentials can drive it. Verified
-   end-to-end against the running server (see "HTTP admin RPC" below). This
-   supersedes the earlier assumption that admin operations required the local
-   `tool` CLI.
+1. **HTTP admin RPC at `/icewarpapi/`** — the remotely callable admin API. It's
+   the same XML-RPC the web admin console uses: POST `<iq>` stanzas in the
+   `admin:iq:rpc` namespace, each carrying a `<commandname>` + `<commandparams>`.
+   **No SSH or co-location needed** — any HTTP(S) client with admin credentials
+   can drive it. Verified end-to-end against the running server (see "HTTP admin
+   RPC" below). This supersedes the earlier assumption that admin operations
+   required the local `tool` CLI.
    - Note: `GET /rpc/` is 404 (the `/rpc` → `/rpc/` 302 is just a redirect) and
      `admin/server/proxy.php?com=` is only a debug log/tunnel — `/icewarpapi/`
      is the real endpoint.
 2. **The `tool` CLI** — equivalent automation for local/console use. Runs in the
    container, or against a remote server with `-r=admin:pass@host:controlport`.
-   Same engine as the RPC; handy for scripting and one-offs, but the bridge
-   should prefer `/icewarpapi/` so it can run anywhere.
+   Same engine as the RPC; handy for scripting and one-offs, though `/icewarpapi/`
+   is preferable for remote automation since it runs anywhere.
 3. **Server-side PHP API library** (`html/_shared/api/*.php`: `api.php`,
    `account.php`, `domain.php`, `apitunnel.php`, `services.php`, …) — the object
    model the bundled web apps use in-process. Useful as a *catalogue* of
@@ -192,7 +189,7 @@ on the response `<iq>`; put that `sid` on every subsequent stanza.
 
 **Verify a user's credentials (no session needed).** `getauthtoken` with the
 user's own email+password: correct → `<authtoken>…`; wrong → `<error
-uid="auth_login_invalid"/>`. This is the bind primitive.
+uid="auth_login_invalid"/>`. This is the credential-check primitive.
 
 **List/search accounts.** `getaccountsinfolist` with `domainstr`, plus `filter`,
 `offset`, `count` (real pagination/filtering). Each `<item>` has `name`, `email`,
@@ -203,26 +200,11 @@ for arbitrary `u_*` properties; `setaccountpassword` (`accountemail`,
 `ignorepolicy`, `password`) for password changes. Create/delete via
 `createaccount` / `deleteaccounts`.
 
-### Bearing on the LDAP bridge (issue 3)
-
-Every IceWarp-side call the bridge needs is exposed over HTTP — **confirmed
-working against `/icewarpapi/`**, not just inferred:
-
-| LDAP op (from Keycloak) | IceWarp HTTP RPC command | Verified |
-| ----------------------- | ------------------------ | -------- |
-| `bind` (auth) | `getauthtoken` (user creds) | ✅ good→token, bad→`auth_login_invalid` |
-| `search` (uid/mail/wildcard) | `getaccountsinfolist` (`domainstr`/`filter`/`offset`/`count`) | ✅ returns email/name/state |
-| disabled/locked status | `accountstate.state` in list, or `u_accountdisabled` via `getaccountproperties` | ✅ |
-| `modify userPassword` | `setaccountpassword` | ✅ changed → re-bound → restored |
-
-So the bridge can run **anywhere** and talk to IceWarp over HTTP(S) with a
-service admin account — it does **not** need to sit on the IceWarp VM or shell
-out over SSH. The cloud API spec doesn't apply; ground the bridge on the
-`/icewarpapi/` admin RPC. (IMAP/SMTP remains a fallback for the bind step if a
-non-admin auth path is preferred.)
+**No timestamps.** None of these expose an account create- or modify-time — not
+`getaccountsinfolist`, `getaccountproperties`, nor the `a_vcard` card.
 
 ## Dev test account
 
-A non-admin test user for the issue 2 OIDC work:
+A non-admin test user for development:
 
 - `oidctest@icewarp.local` / `Br1dge-Feasible-2026!`
