@@ -94,22 +94,43 @@ func (c *Client) ListAccounts(ctx context.Context, domain, nameMask string, offs
 	return res.Items, res.OverallCount, nil
 }
 
-// ListGroups searches a domain for group accounts (accounttype 7). offset/count
-// page the results (pass count <= 0 for the server default); it returns the page
-// plus the overall match count.
+// ListGroups searches a domain for group accounts (accounttypes 1 and 7).
+// offset/count page the combined results (pass count <= 0 to return from the
+// requested offset through the end of the combined result set).
 func (c *Client) ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error) {
-	groupType := 7
-	var res listResult
-	err := c.sessionCall(ctx, "getaccountsinfolist", listParams{
-		Domain: domain,
-		Filter: listFilter{NameMask: "*", TypeMask: &groupType},
-		Offset: offset,
-		Count:  count,
-	}, &res)
-	if err != nil {
-		return nil, 0, err
+	groupTypes := []int{1, 7}
+	items := make([]Account, 0)
+	overallCount := 0
+
+	for _, groupType := range groupTypes {
+		var res listResult
+		err := c.sessionCall(ctx, "getaccountsinfolist", listParams{
+			Domain: domain,
+			Filter: listFilter{NameMask: "*", TypeMask: &groupType},
+			Offset: offset,
+			Count:  count,
+		}, &res)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, res.Items...)
+		overallCount += res.OverallCount
 	}
-	return res.Items, res.OverallCount, nil
+
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(items) {
+		return nil, len(items), nil
+	}
+	if count <= 0 {
+		return items[offset:], len(items), nil
+	}
+	end := offset + count
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end], len(items), nil
 }
 
 // GetGroupMembers reads the member addresses of a group (or list/resource) by its
