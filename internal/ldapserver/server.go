@@ -274,9 +274,9 @@ func (s *Server) userCandidates(ctx context.Context, filter string) ([]users.Use
 // skips the enumeration entirely.
 func (s *Server) searchGroups(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) error {
 	var candidates []users.Group
-	if name, ok := s.schema.groupNameFromDN(base); ok && scope == scopeBaseObject {
-		candidates = []users.Group{{Name: name}}
-	} else {
+	//if name, ok := s.schema.groupNameFromDN(base); ok && scope == scopeBaseObject {
+	//	candidates = []users.Group{{Name: name}}
+	//} else {
 		groups, err := s.repo.ListGroups(context.Background())
 		if err != nil {
 			return err
@@ -287,7 +287,7 @@ func (s *Server) searchGroups(w *gldap.ResponseWriter, r *gldap.Request, m *glda
 				candidates = append(candidates, g)
 			}
 		}
-	}
+	//}
 
 	enriched, err := s.enrichGroups(context.Background(), candidates)
 	if err != nil {
@@ -402,7 +402,7 @@ func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) ([]
 				return
 			}
 			mu.Lock()
-			out = append(out, users.Group{Name: name, Members: members})
+			out = append(out, users.Group{Name: name, Members: members, DisplayName: c.DisplayName, Email: c.Email})
 			mu.Unlock()
 		}(c.Name)
 	}

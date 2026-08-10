@@ -68,7 +68,8 @@ func (s Schema) groupNameFromDN(dn string) (string, bool) {
 func (s Schema) groupAttrs(g users.Group) map[string][]string {
 	a := map[string][]string{
 		"objectclass": groupObjectClasses,
-		"cn":          {g.Name},
+		"cn":          {g.DisplayName},
+		"mail":        {g.Email},
 		"uid":         {g.Name},
 		"entryuuid":   {stableGroupUUID(g.Name)},
 	}
