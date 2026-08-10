@@ -77,9 +77,9 @@ func (s Schema) groupAttrs(g users.Group) map[string][]string {
 	if len(g.Members) > 0 {
 		members := make([]string, len(g.Members))
 		for i, m := range g.Members {
-			members[i] = s.userDN(m)
+			members[i] = s.uidValue(m+ "@" + s.Domain)
 		}
-		a["member"] = members
+		a["zimbraMailForwardingAddress"] = members
 	}
 	return a
 }
@@ -171,13 +171,13 @@ func (s Schema) attrs(u users.User) map[string][]string {
 	}
 	// memberOf carries the group DNs when group entries are served, for a Keycloak
 	// Group LDAP mapper (memberOf strategy). Read-only.
-	if s.GroupBaseDN != "" && len(u.Groups) > 0 {
+	/*if s.GroupBaseDN != "" && len(u.Groups) > 0 {
 		dns := make([]string, len(u.Groups))
 		for i, g := range u.Groups {
 			dns[i] = s.groupDN(g)
 		}
 		a["memberof"] = dns
-	}
+	}*/
 	return a
 }
 
