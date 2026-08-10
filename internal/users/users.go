@@ -49,6 +49,8 @@ type User struct {
 // presented as the cn). Members are member usernames (mailbox local parts).
 type Group struct {
 	Name    string
+	Email   string
+	DisplayName string
 	Members []string
 }
 

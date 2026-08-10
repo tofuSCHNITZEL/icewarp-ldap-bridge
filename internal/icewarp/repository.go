@@ -265,7 +265,7 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 			return nil, err
 		}
 		for _, a := range page {
-			groups = append(groups, users.Group{Name: localPart(a.Email)})
+			groups = append(groups, users.Group{Name: localPart(a.Email), Email: a.Email, DisplayName: a.Name})
 		}
 		offset += len(page)
 		if len(page) == 0 || offset >= total {

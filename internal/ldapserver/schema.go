@@ -69,6 +69,7 @@ func (s Schema) groupAttrs(g users.Group) map[string][]string {
 	a := map[string][]string{
 		"objectclass": groupObjectClasses,
 		"cn":          {g.Name},
+		"uid":         {g.Name},
 		"entryuuid":   {stableGroupUUID(g.Name)},
 	}
 	if len(g.Members) > 0 {
