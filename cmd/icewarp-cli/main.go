@@ -2,16 +2,26 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
+	"strconv"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/icewarp"
 )
 
 const cliPageSize = 250
+
+// propOutput is the JSON/CSV representation of a single account property.
+type propOutput struct {
+	Val  string            `json:"val,omitempty"`
+	Card map[string]string `json:"card,omitempty"`
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -24,6 +34,7 @@ func main() {
 	email := global.String("email", envOr("ICEWARP_ADMIN_EMAIL", ""), "admin `email`")
 	password := global.String("password", envOr("ICEWARP_ADMIN_PASSWORD", ""), "admin `password`")
 	domain := global.String("domain", envOr("ICEWARP_DOMAIN", ""), "mail `domain`")
+	format := global.String("format", "json", "output format: json or csv")
 	verbose := global.Bool("v", false, "verbose logging to stderr")
 	global.Usage = printUsage
 	global.Parse(os.Args[1:]) //nolint:errcheck // ExitOnError never returns an error
@@ -34,6 +45,9 @@ func main() {
 		os.Exit(2)
 	}
 
+	if *format != "json" && *format != "csv" {
+		die("--format must be json or csv")
+	}
 	if *url == "" || *email == "" || *password == "" {
 		die("--url, --email, --password are required (or ICEWARP_URL, ICEWARP_ADMIN_EMAIL, ICEWARP_ADMIN_PASSWORD)")
 	}
@@ -51,18 +65,18 @@ func main() {
 		if *domain == "" {
 			die("--domain is required for get-groups")
 		}
-		cmdGetGroups(client, *domain, subArgs)
+		cmdGetGroups(client, *domain, *format, subArgs)
 	case "list-accounts":
 		if *domain == "" {
 			die("--domain is required for list-accounts")
 		}
-		cmdListAccounts(client, *domain, subArgs)
+		cmdListAccounts(client, *domain, *format, subArgs)
 	case "get-group-members":
-		cmdGetGroupMembers(client, subArgs)
+		cmdGetGroupMembers(client, *format, subArgs)
 	case "get-account-properties":
-		cmdGetAccountProperties(client, subArgs)
+		cmdGetAccountProperties(client, *format, subArgs)
 	case "get-account-card":
-		cmdGetAccountCard(client, subArgs)
+		cmdGetAccountCard(client, *format, subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", sub)
 		printUsage()
@@ -70,7 +84,7 @@ func main() {
 	}
 }
 
-func cmdGetGroups(client *icewarp.Client, domain string, args []string) {
+func cmdGetGroups(client *icewarp.Client, domain, format string, args []string) {
 	fs := flag.NewFlagSet("get-groups", flag.ExitOnError)
 	groupType := fs.Int("type", 7, "account type to filter (7=group/public-folder, 1=mailing-list, 8=resource)")
 	offset := fs.Int("offset", 0, "start offset")
@@ -93,10 +107,15 @@ func cmdGetGroups(client *icewarp.Client, domain string, args []string) {
 			}
 		}
 	}
-	writeJSON(accounts)
+
+	if format == "csv" {
+		writeAccountsCSV(accounts)
+	} else {
+		writeJSON(accounts)
+	}
 }
 
-func cmdListAccounts(client *icewarp.Client, domain string, args []string) {
+func cmdListAccounts(client *icewarp.Client, domain, format string, args []string) {
 	fs := flag.NewFlagSet("list-accounts", flag.ExitOnError)
 	mask := fs.String("mask", "*", "name mask glob (* and ? wildcards)")
 	offset := fs.Int("offset", 0, "start offset")
@@ -119,10 +138,15 @@ func cmdListAccounts(client *icewarp.Client, domain string, args []string) {
 			}
 		}
 	}
-	writeJSON(accounts)
+
+	if format == "csv" {
+		writeAccountsCSV(accounts)
+	} else {
+		writeJSON(accounts)
+	}
 }
 
-func cmdGetGroupMembers(client *icewarp.Client, args []string) {
+func cmdGetGroupMembers(client *icewarp.Client, format string, args []string) {
 	fs := flag.NewFlagSet("get-group-members", flag.ExitOnError)
 	offset := fs.Int("offset", 0, "start offset")
 	count := fs.Int("count", 0, "max results per page (0=fetch all pages)")
@@ -154,10 +178,15 @@ func cmdGetGroupMembers(client *icewarp.Client, args []string) {
 			}
 		}
 	}
-	writeJSON(members)
+
+	if format == "csv" {
+		writeMembersCSV(members)
+	} else {
+		writeJSON(members)
+	}
 }
 
-func cmdGetAccountProperties(client *icewarp.Client, args []string) {
+func cmdGetAccountProperties(client *icewarp.Client, format string, args []string) {
 	fs := flag.NewFlagSet("get-account-properties", flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: icewarp-cli [global flags] get-account-properties ACCOUNT_EMAIL PROP [PROP...]")
@@ -174,10 +203,6 @@ func cmdGetAccountProperties(client *icewarp.Client, args []string) {
 	properties, err := client.GetAccountProperties(context.Background(), accountEmail, props...)
 	check(err)
 
-	type propOutput struct {
-		Val  string            `json:"val,omitempty"`
-		Card map[string]string `json:"card,omitempty"`
-	}
 	out := make(map[string]propOutput, len(properties))
 	for name, p := range properties {
 		po := propOutput{Val: p.Val}
@@ -186,10 +211,15 @@ func cmdGetAccountProperties(client *icewarp.Client, args []string) {
 		}
 		out[name] = po
 	}
-	writeJSON(out)
+
+	if format == "csv" {
+		writePropertiesCSV(out)
+	} else {
+		writeJSON(out)
+	}
 }
 
-func cmdGetAccountCard(client *icewarp.Client, args []string) {
+func cmdGetAccountCard(client *icewarp.Client, format string, args []string) {
 	fs := flag.NewFlagSet("get-account-card", flag.ExitOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: icewarp-cli [global flags] get-account-card ACCOUNT_EMAIL")
@@ -202,8 +232,15 @@ func cmdGetAccountCard(client *icewarp.Client, args []string) {
 	}
 	card, err := client.GetAccountCard(context.Background(), fs.Arg(0))
 	check(err)
-	writeJSON(card.Map())
+
+	if format == "csv" {
+		writeMapCSV("Field", "Value", card.Map())
+	} else {
+		writeJSON(card.Map())
+	}
 }
+
+// --- JSON output ---
 
 func writeJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
@@ -212,6 +249,65 @@ func writeJSON(v any) {
 		die(err.Error())
 	}
 }
+
+// --- CSV output ---
+
+func writeAccountsCSV(accounts []icewarp.Account) {
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{"Name", "Email", "DisplayEmail", "AccountType", "State", "AdminType"}) //nolint:errcheck
+	for _, a := range accounts {
+		w.Write([]string{ //nolint:errcheck
+			a.Name,
+			a.Email,
+			a.DisplayEmail,
+			strconv.Itoa(a.AccountType),
+			strconv.Itoa(a.State),
+			strconv.Itoa(a.AdminType),
+		})
+	}
+	w.Flush()
+	check(w.Error())
+}
+
+func writeMembersCSV(members []string) {
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{"Email"}) //nolint:errcheck
+	for _, m := range members {
+		w.Write([]string{m}) //nolint:errcheck
+	}
+	w.Flush()
+	check(w.Error())
+}
+
+// writePropertiesCSV writes string properties as "Property,Value" rows and
+// card properties as "Property.Field,Value" rows, sorted by key.
+func writePropertiesCSV(props map[string]propOutput) {
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{"Property", "Value"}) //nolint:errcheck
+	for _, name := range slices.Sorted(maps.Keys(props)) {
+		p := props[name]
+		if p.Val != "" || len(p.Card) == 0 {
+			w.Write([]string{name, p.Val}) //nolint:errcheck
+		}
+		for _, field := range slices.Sorted(maps.Keys(p.Card)) {
+			w.Write([]string{name + "." + field, p.Card[field]}) //nolint:errcheck
+		}
+	}
+	w.Flush()
+	check(w.Error())
+}
+
+func writeMapCSV(keyHeader, valHeader string, m map[string]string) {
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{keyHeader, valHeader}) //nolint:errcheck
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		w.Write([]string{k, m[k]}) //nolint:errcheck
+	}
+	w.Flush()
+	check(w.Error())
+}
+
+// --- helpers ---
 
 func check(err error) {
 	if err != nil {
@@ -239,6 +335,7 @@ Global flags:
   --email EMAIL      Admin email         (env: ICEWARP_ADMIN_EMAIL)
   --password PASS    Admin password      (env: ICEWARP_ADMIN_PASSWORD)
   --domain DOMAIN    Mail domain         (env: ICEWARP_DOMAIN)
+  --format FORMAT    Output format: json (default) or csv
   -v                 Verbose logging to stderr
 
 Subcommands:
