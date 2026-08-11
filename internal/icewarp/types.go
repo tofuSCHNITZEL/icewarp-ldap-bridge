@@ -90,6 +90,15 @@ func (c *AccountCard) Set(name, value string) {
 	c.fields = append(c.fields, cardField{XMLName: xml.Name{Local: name}, Value: value})
 }
 
+// Map returns all card fields as a name→value map.
+func (c AccountCard) Map() map[string]string {
+	m := make(map[string]string, len(c.fields))
+	for _, f := range c.fields {
+		m[f.XMLName.Local] = f.Value
+	}
+	return m
+}
+
 // --- request param structs (each marshals to <commandparams>) ---
 
 type authParams struct {

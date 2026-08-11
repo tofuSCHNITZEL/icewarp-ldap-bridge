@@ -30,7 +30,7 @@ type accountAPI interface {
 	SetAccountProperties(ctx context.Context, email string, props ...WriteProperty) error
 	SetAccountCard(ctx context.Context, email string, card AccountCard) error
 	DeleteAccounts(ctx context.Context, domain string, emails ...string) error
-	ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error)
+	ListGroups(ctx context.Context, domain string, groupType int, offset, count int) ([]Account, int, error)
 	GetGroupMembers(ctx context.Context, groupEmail string, offset, count int) ([]string, int, error)
 }
 
@@ -260,7 +260,7 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 	const pageSize = 250
 	var groups []users.Group
 	for offset := 0; ; {
-		page, total, err := r.client.ListGroups(ctx, r.domain, offset, pageSize)
+		page, total, err := r.client.ListGroups(ctx, r.domain, 7, offset, pageSize)
 		if err != nil {
 			return nil, err
 		}

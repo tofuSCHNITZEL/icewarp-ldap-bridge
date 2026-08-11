@@ -100,7 +100,7 @@ func (m *mockClient) DeleteAccounts(_ context.Context, domain string, emails ...
 	return nil
 }
 
-func (m *mockClient) ListGroups(_ context.Context, _ string, _, _ int) ([]Account, int, error) {
+func (m *mockClient) ListGroups(_ context.Context, _ string, _ int, _, _ int) ([]Account, int, error) {
 	return m.groupAccounts, m.groupTotal, nil
 }
 

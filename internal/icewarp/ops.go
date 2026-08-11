@@ -94,11 +94,11 @@ func (c *Client) ListAccounts(ctx context.Context, domain, nameMask string, offs
 	return res.Items, res.OverallCount, nil
 }
 
-// ListGroups searches a domain for group accounts (accounttype 7). offset/count
-// page the results (pass count <= 0 for the server default); it returns the page
-// plus the overall match count.
-func (c *Client) ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error) {
-	groupType := 7
+// ListGroups searches a domain for accounts of the given type. Use groupType 7
+// for groups/public folders (the default for LDAP bridge use), 1 for mailing
+// lists, 8 for resources, etc. offset/count page the results (pass count <= 0
+// for the server default); it returns the page plus the overall match count.
+func (c *Client) ListGroups(ctx context.Context, domain string, groupType int, offset, count int) ([]Account, int, error) {
 	var res listResult
 	err := c.sessionCall(ctx, "getaccountsinfolist", listParams{
 		Domain: domain,
