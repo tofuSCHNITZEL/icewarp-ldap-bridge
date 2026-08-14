@@ -29,25 +29,37 @@ environment variables; the table below mirrors it for convenience.
 The IceWarp backend is configured via environment variables (defaults target the
 dev stack):
 
-| Variable                 | Default                         | Notes                                                              |
-| ------------------------ | ------------------------------- | ------------------------------------------------------------------ |
-| `ICEWARP_URL`            | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                 |
-| `ICEWARP_DOMAIN`         | `icewarp.local`                 | mail domain                                                        |
-| `ICEWARP_ADMIN_EMAIL`    | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                      |
-| `ICEWARP_ADMIN_PASSWORD` | *(required)*                    | no default; set it (the dev value is in `.env.example`)            |
-| `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                         |
-| `LDAP_EMAIL_AS_UID`      | *(off)*                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username") |
+| Variable                 | Default                         | Notes                                                                                             |
+| ------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ICEWARP_URL`            | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                                                |
+| `ICEWARP_DOMAIN`         | `icewarp.local`                 | mail domain                                                                                       |
+| `ICEWARP_ADMIN_EMAIL`    | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                                                     |
+| `ICEWARP_ADMIN_PASSWORD` | _(required)_                    | no default; set it (the dev value is in `.env.example`)                                           |
+| `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                                                        |
+| `LDAP_EMAIL_AS_UID`      | _(off)_                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username")                      |
 | `LDAP_GROUP_BASE_DN`     | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it |
-| `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                             |
-| `INTROSPECT_ICEWARP`     | *(off)*                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk |
+| `CACHE_REFRESH_INTERVAL` | `10m`                           | how often the cached directory snapshot is refreshed; `0`/`off` serves every read from IceWarp    |
+| `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                                                            |
+| `INTROSPECT_ICEWARP`     | _(off)_                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk                               |
 
 Logging is `log/slog` to stderr. At `debug` the server logs one line per incoming
 LDAP request and one per outgoing IceWarp RPC call.
 
+**Cached directory snapshot.** The IceWarp API is slow and an LDAP subtree search
+would otherwise cost one call per user, so the bridge keeps the whole directory
+(users, their names and group memberships, and group members) in memory and
+refreshes it every `CACHE_REFRESH_INTERVAL` in the background. Searches are
+answered from that snapshot; binds always go to IceWarp (credentials are never
+cached), and writes through the bridge update the snapshot immediately. A change
+made _outside_ the bridge becomes visible at the next refresh — a lookup of an
+account the snapshot doesn't know still falls through to IceWarp, so brand-new
+accounts are found right away. If a refresh fails the previous snapshot keeps
+serving rather than failing searches (which Keycloak could read as mass deletion).
+
 **No create/modify timestamps — use full sync.** IceWarp exposes no account
 creation or modification time the bridge can serve (see `docs/icewarp.md`), so
-entries carry no `createTimestamp`/`modifyTimestamp`. Keycloak's *Periodic Changed
-Users Sync* relies on `modifyTimestamp` to find changed accounts and would sync
+entries carry no `createTimestamp`/`modifyTimestamp`. Keycloak's _Periodic Changed
+Users Sync_ relies on `modifyTimestamp` to find changed accounts and would sync
 nothing — configure the LDAP federation with **Periodic Full Sync** instead.
 
 ### Attribute mapping
@@ -67,36 +79,36 @@ is unaffected, so the toggle doesn't re-link existing users.
 
 Each entry carries these attributes (lower-cased on the wire). The name parts come
 from the IceWarp `a_vcard` contact card and are **read/write** — in Keycloak, add
-a *User Attribute LDAP mapper* for whichever you want; the rest are ignored.
+a _User Attribute LDAP mapper_ for whichever you want; the rest are ignored.
 Optional attributes appear only when the source field is non-empty. The optional
 name parts use the IceWarp field names (`middlename`/`nickname`/`suffix`) rather
 than near-equivalent inetOrgPerson attributes, so each mapper is a 1:1 pass-through;
 the standard `givenName`/`sn`/`cn`/`mail`/`uid` set is kept for the load-bearing
 fields.
 
-| LDAP attribute        | IceWarp source                | notes                                       |
-| --------------------- | ----------------------------- | ------------------------------------------- |
-| `uid`                 | mailbox local part (or primary email with `LDAP_EMAIL_AS_UID`) | username; the RDN |
-| `cn`                  | card `fileas` (→ `u_name`)    | display name; mandatory                     |
-| `givenName`           | card `firstname`              | first name                                  |
-| `sn`                  | card `lastname`               | last name                                   |
-| `middlename`          | card `middlename`             | middle name (optional)                      |
-| `nickname`            | card `nickname`               | nickname (optional)                         |
-| `suffix`              | card `suffix`                 | name suffix, e.g. Jr/III (optional)         |
-| `personalTitle`       | card `title`                  | honorific, e.g. Herr/Dr (optional); standard name kept — LDAP `title` means *job* title |
-| `mail`                | primary address               | **rejected on modify** (rename unsupported) |
-| `memberOf`            | `u_groups` (group DNs)        | group memberships as group DNs, multi-valued; **read-only**; present when `LDAP_GROUP_BASE_DN` is set |
-| `userPassword`        | `getauthtoken` / `setaccountpassword` | write-only (bind / password set)    |
-| `entryUUID`           | derived from username         | stable federation link                      |
+| LDAP attribute  | IceWarp source                                                 | notes                                                                                                 |
+| --------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `uid`           | mailbox local part (or primary email with `LDAP_EMAIL_AS_UID`) | username; the RDN                                                                                     |
+| `cn`            | card `fileas` (→ `u_name`)                                     | display name; mandatory                                                                               |
+| `givenName`     | card `firstname`                                               | first name                                                                                            |
+| `sn`            | card `lastname`                                                | last name                                                                                             |
+| `middlename`    | card `middlename`                                              | middle name (optional)                                                                                |
+| `nickname`      | card `nickname`                                                | nickname (optional)                                                                                   |
+| `suffix`        | card `suffix`                                                  | name suffix, e.g. Jr/III (optional)                                                                   |
+| `personalTitle` | card `title`                                                   | honorific, e.g. Herr/Dr (optional); standard name kept — LDAP `title` means _job_ title               |
+| `mail`          | primary address                                                | **rejected on modify** (rename unsupported)                                                           |
+| `memberOf`      | `u_groups` (group DNs)                                         | group memberships as group DNs, multi-valued; **read-only**; present when `LDAP_GROUP_BASE_DN` is set |
+| `userPassword`  | `getauthtoken` / `setaccountpassword`                          | write-only (bind / password set)                                                                      |
+| `entryUUID`     | derived from username                                          | stable federation link                                                                                |
 
 ### Groups
 
 The bridge exposes IceWarp groups (accounttype 7) read-only as LDAP entries
 (`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`): each group is an
 entry (`cn=<group>,<base>`, objectClass `groupOfNames`, `member` = user DNs) and
-each user entry gains a `memberOf` of group DNs. Point a Keycloak *Group LDAP
-mapper* at the base DN to import them as Keycloak **groups** (hierarchy, role
-mappings); for a plain group claim, add a *Group Membership* protocol mapper on
+each user entry gains a `memberOf` of group DNs. Point a Keycloak _Group LDAP
+mapper_ at the base DN to import them as Keycloak **groups** (hierarchy, role
+mappings); for a plain group claim, add a _Group Membership_ protocol mapper on
 top. Set the env var empty to disable groups entirely.
 
 **Use the mapper's `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` retrieve strategy** (the
@@ -109,12 +121,12 @@ directory. There is no such pitfall with `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE`.
 
 A group entry (`cn=<group>,<LDAP_GROUP_BASE_DN>`) carries these attributes:
 
-| LDAP attribute | IceWarp source                       | notes                                              |
-| -------------- | ------------------------------------ | -------------------------------------------------- |
-| `objectClass`  | fixed                                | `top`, `groupOfNames`                              |
-| `cn`           | group mailbox local part             | the RDN                                            |
+| LDAP attribute | IceWarp source                             | notes                                                                          |
+| -------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `objectClass`  | fixed                                      | `top`, `groupOfNames`                                                          |
+| `cn`           | group mailbox local part                   | the RDN                                                                        |
 | `member`       | group members (`GetAccountMemberInfoList`) | member user DNs (`uid=<user>,<LDAP_USER_BASE_DN>`); omitted for an empty group |
-| `entryUUID`    | derived from the group name          | stable; namespaced so it never collides with a user's |
+| `entryUUID`    | derived from the group name                | stable; namespaced so it never collides with a user's                          |
 
 Groups are **read-only** — the bridge never provisions group membership, so keep
 the Keycloak mapper read-only.
@@ -123,7 +135,6 @@ the Keycloak mapper read-only.
 (RFC 4515 filters — boolean, equality, presence, substring — post-filtered in Go),
 add/modify/delete, and a Root DSE advertising paged results. ModifyDN/rename and
 Compare are not supported (the underlying `gldap` server has no routes for them).
-
 
 ## Development
 
@@ -146,12 +157,12 @@ Local dev stack via Docker Compose: Postgres, Keycloak, IceWarp, and OpenLDAP.
 
 ### Services
 
-| Service  | URL / Port            | Credentials                               |
-| -------- | --------------------- | ----------------------------------------- |
-| Keycloak | http://localhost:8080 | admin / password                          |
-| IceWarp  | http://localhost:8081 | —                                         |
-| Postgres | localhost:5432        | postgres / password                       |
-| OpenLDAP | localhost:1389        | uid=admin,dc=icewarp,dc=local / password  |
+| Service  | URL / Port            | Credentials                              |
+| -------- | --------------------- | ---------------------------------------- |
+| Keycloak | http://localhost:8080 | admin / password                         |
+| IceWarp  | http://localhost:8081 | —                                        |
+| Postgres | localhost:5432        | postgres / password                      |
+| OpenLDAP | localhost:1389        | uid=admin,dc=icewarp,dc=local / password |
 
 OpenLDAP is seeded on first start from `docker/ldap/ldifs/` with a small org tree
 (`ou=people`, `ou=groups`) and two test users (`jdoe`, `asmith`, both with

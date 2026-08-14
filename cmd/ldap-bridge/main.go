@@ -11,10 +11,12 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/verdigado/icewarp-ldap-bridge/internal/icewarp"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/ldapserver"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
+	"github.com/verdigado/icewarp-ldap-bridge/internal/users/cache"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users/memory"
 )
 
@@ -30,6 +32,7 @@ var envVars = []struct{ name, def, desc string }{
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
 	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
 	{"LDAP_GROUP_BASE_DN", "ou=groups,dc=icewarp,dc=local", "serve groups as LDAP entries under this DN and add memberOf to users (Keycloak Group mapper); empty disables it"},
+	{"CACHE_REFRESH_INTERVAL", "10m", "how often the cached directory snapshot is refreshed (Go duration); 0 or off serves every read from IceWarp"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
 }
@@ -49,16 +52,18 @@ func main() {
 		GroupBaseDN: optionalEnv("LDAP_GROUP_BASE_DN"),
 	}
 
-	srv, err := ldapserver.New(buildRepository(*useMemory, logger), schema, logger)
+	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached
+	// IceWarp session are released cleanly instead of dropped on process kill.
+	// The same context stops the cache refresher.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	srv, err := ldapserver.New(buildRepository(ctx, *useMemory, logger), schema, logger)
 	if err != nil {
 		logger.Error("create server", "err", err)
 		os.Exit(1)
 	}
 
-	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached
-	// IceWarp session are released cleanly instead of dropped on process kill.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		logger.Info("shutdown signal received, stopping")
@@ -75,9 +80,10 @@ func main() {
 }
 
 // buildRepository selects the backend. The default is IceWarp, configured from
-// the ICEWARP_* env vars (defaulting to the dev stack). The
-// --use-in-memory-dummy flag swaps in the in-memory backend with a dev admin.
-func buildRepository(useMemory bool, logger *slog.Logger) users.Repository {
+// the ICEWARP_* env vars (defaulting to the dev stack) and fronted by the
+// refreshing cache unless it is turned off. The --use-in-memory-dummy flag swaps
+// in the in-memory backend with a dev admin.
+func buildRepository(ctx context.Context, useMemory bool, logger *slog.Logger) users.Repository {
 	if useMemory {
 		repo := memory.New()
 		seedDev(repo)
@@ -104,7 +110,31 @@ func buildRepository(useMemory bool, logger *slog.Logger) users.Repository {
 	}
 	client := icewarp.NewClient(endpoint, adminEmail, adminPassword, opts...)
 	logger.Info("backend: IceWarp", "url", endpoint, "domain", domain)
-	return icewarp.NewRepository(client, domain, logger)
+	repo := icewarp.NewRepository(client, domain, logger)
+
+	ttl, err := cacheInterval()
+	if err != nil {
+		logger.Error("invalid CACHE_REFRESH_INTERVAL", "err", err)
+		os.Exit(1)
+	}
+	if ttl <= 0 {
+		logger.Info("cache: disabled, every LDAP read hits IceWarp")
+		return repo
+	}
+	cached := cache.New(repo, ttl, logger)
+	go cached.Run(ctx)
+	logger.Info("cache: enabled", "refresh_interval", ttl)
+	return cached
+}
+
+// cacheInterval reads CACHE_REFRESH_INTERVAL as a Go duration; a falsy value
+// (0/false/no/off) disables caching.
+func cacheInterval() (time.Duration, error) {
+	v := env("CACHE_REFRESH_INTERVAL")
+	if !truthy(v) {
+		return 0, nil
+	}
+	return time.ParseDuration(v)
 }
 
 // seedDev gives the in-memory backend a single admin user to bind as, so the
