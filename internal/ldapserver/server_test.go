@@ -73,8 +73,17 @@ func emptyPasswordBind(conn *ldap.Conn, dn string) error {
 	return err
 }
 
-// TestBindEmptyPasswordRejected: an empty-password (unauthenticated) bind for a
-// real account must fail.
+func TestBindAnonymousSucceeds(t *testing.T) {
+	repo := memory.New()
+	addr := startServer(t, repo)
+
+	if err := emptyPasswordBind(dial(t, addr), ""); err != nil {
+		t.Fatalf("anonymous bind failed: %v", err)
+	}
+}
+
+// TestBindEmptyPasswordRejected: an empty-password (unauthenticated) bind for
+// a real account must fail, unlike an anonymous bind with an empty DN.
 func TestBindEmptyPasswordRejected(t *testing.T) {
 	repo := memory.New()
 	repo.Seed(users.User{Username: "admin", Password: "secret"})
