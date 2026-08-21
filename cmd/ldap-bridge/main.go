@@ -53,6 +53,11 @@ func main() {
 		GroupBaseDN:         optionalEnv("LDAP_GROUP_BASE_DN"),
 		AllowAnonymousReads: truthy(env("LDAP_ALLOW_ANONYMOUS_READS")),
 	}
+	if schema.AllowAnonymousReads {
+		logger.Info("anonymous reads: enabled, searches are served without a bind")
+	} else {
+		logger.Info("anonymous reads: disabled")
+	}
 
 	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached
 	// IceWarp session are released cleanly instead of dropped on process kill.
