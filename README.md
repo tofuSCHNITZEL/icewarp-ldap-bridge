@@ -197,6 +197,13 @@ A group entry (`cn=<group>,<LDAP_GROUP_BASE_DN>`) carries these attributes:
 Groups are **read-only** — the bridge never provisions group membership, so keep
 the Keycloak mapper read-only.
 
+**Browsing above `LDAP_USER_BASE_DN`/`LDAP_GROUP_BASE_DN`.** A search based at
+their shared parent DN (or an empty base DN) lists them as `organizationalUnit`
+entries, so an LDAP browser can be pointed at the org DN (e.g.
+`dc=icewarp,dc=local`) or connected with no base DN at all and still see
+"people"/"groups" as subordinate folders to expand — there is no backing data
+for these entries beyond the DN itself.
+
 **Operations:** bind (validate a password by binding as the user's DN), search
 (RFC 4515 filters — boolean, equality, presence, substring — post-filtered in Go),
 add/modify/delete, and a Root DSE advertising paged results. ModifyDN/rename and

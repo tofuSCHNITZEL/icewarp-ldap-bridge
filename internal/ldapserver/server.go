@@ -170,6 +170,8 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 	base := normalizeDN(m.BaseDN)
 	scope := int64(m.Scope)
 
+	s.searchContainers(w, r, m, base, scope)
+
 	// The bridge serves entries under two containers: users (BaseUserDN) and,
 	// when enabled, groups (GroupBaseDN). Only run the flow for a container the
 	// search can actually reach, so a user-only search never enumerates groups
@@ -196,6 +198,58 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		}
 	}
 	resp.SetResultCode(gldap.ResultSuccess)
+}
+
+// searchContainers emits synthetic organizationalUnit entries standing in for
+// the configured containers (BaseUserDN, GroupBaseDN) themselves, so a client
+// can browse down into them from their parent DN — or from an empty base DN,
+// treated the same way — the way native LDAP containers work. There is no
+// backing data for these entries; List/ListGroups still only serve the real
+// user/group entries beneath them.
+func (s *Server) searchContainers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) {
+	containers := []string{s.schema.BaseUserDN}
+	if s.schema.GroupBaseDN != "" {
+		containers = append(containers, s.schema.GroupBaseDN)
+	}
+	for _, c := range containers {
+		switch {
+		case scope == scopeBaseObject && base == normalizeDN(c):
+			// A base-scoped lookup of the container's own DN.
+		case scope != scopeBaseObject && (base == "" || base == normalizeDN(parentDN(c))):
+			// A one-level/subtree search browsing from the container's parent
+			// (or the empty DN, treated as "somewhere above every container").
+		default:
+			continue
+		}
+		attrs := containerAttrs(c)
+		if !matchFilter(m.Filter, attrs) {
+			continue
+		}
+		_ = w.Write(r.NewSearchResponseEntry(c, gldap.WithAttributes(attrs)))
+	}
+}
+
+// parentDN returns dn's parent (everything after its leading RDN), or "" if dn
+// has none.
+func parentDN(dn string) string {
+	_, rest, ok := strings.Cut(dn, ",")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rest)
+}
+
+// containerAttrs builds the attributes for a synthetic container entry (see
+// searchContainers) from its own DN: a generic organizationalUnit named by the
+// DN's leading RDN attribute (typically "ou", but whatever the config uses).
+func containerAttrs(dn string) map[string][]string {
+	attrs := map[string][]string{"objectclass": {"top", "organizationalUnit"}}
+	rdn, _, _ := strings.Cut(dn, ",")
+	attr, val, ok := strings.Cut(rdn, "=")
+	if ok && attr != "" && val != "" {
+		attrs[strings.ToLower(strings.TrimSpace(attr))] = []string{strings.TrimSpace(val)}
+	}
+	return attrs
 }
 
 // Deferred attributes are the membership links the bridge resolves only during

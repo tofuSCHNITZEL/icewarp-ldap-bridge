@@ -277,10 +277,119 @@ func TestSearchAllowAnonymousReads(t *testing.T) {
 }
 
 const testGroupBaseDN = "ou=groups,dc=icewarp,dc=local"
+const testOrgDN = "dc=icewarp,dc=local" // shared parent of testBaseDN/testGroupBaseDN
 
 // groupSchema enables both subtrees for the wire group tests.
 func groupSchema() Schema {
 	return Schema{BaseUserDN: testBaseDN, Domain: "icewarp.local", GroupBaseDN: testGroupBaseDN}
+}
+
+// TestSearchContainersFromOrgDN: a one-level search at the containers' shared
+// parent DN lists "ou=people"/"ou=groups" as organizationalUnit entries, not
+// the users/groups beneath them.
+func TestSearchContainersFromOrgDN(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	repo.SeedGroup("group1")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testOrgDN, Scope: ldap.ScopeSingleLevel, Filter: "(objectClass=*)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (ou=people, ou=groups): %v", len(res.Entries), res.Entries)
+	}
+	dns := []string{res.Entries[0].DN, res.Entries[1].DN}
+	if !contains(dns, testBaseDN) || !contains(dns, testGroupBaseDN) {
+		t.Fatalf("entry DNs = %v, want %v and %v", dns, testBaseDN, testGroupBaseDN)
+	}
+	for _, e := range res.Entries {
+		if oc := e.GetAttributeValues("objectclass"); !contains(oc, "organizationalUnit") {
+			t.Errorf("entry %s objectClass = %v, want organizationalUnit", e.DN, oc)
+		}
+	}
+}
+
+// TestSearchContainersFromEmptyBaseDN: an empty base DN is treated the same as
+// the containers' shared parent for browsing.
+func TestSearchContainersFromEmptyBaseDN(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: "", Scope: ldap.ScopeSingleLevel, Filter: "(objectClass=*)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (ou=people, ou=groups): %v", len(res.Entries), res.Entries)
+	}
+}
+
+// TestSearchContainerSelfEntry: a base-scoped lookup of a container's own DN
+// returns its synthetic organizationalUnit entry.
+func TestSearchContainerSelfEntry(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeBaseObject, Filter: "(objectClass=*)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].DN != testBaseDN {
+		t.Fatalf("got %v, want a single entry for %s", res.Entries, testBaseDN)
+	}
+}
+
+// TestSearchContainersSubtreeIncludesUsers: a subtree search from the org DN
+// returns both the container entries and the real entries beneath them.
+func TestSearchContainersSubtreeIncludesUsers(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testOrgDN, Scope: ldap.ScopeWholeSubtree, Filter: "(uid=johndoe)",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].DN != "uid=johndoe,"+testBaseDN {
+		t.Fatalf("got %v, want the single user entry", res.Entries)
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSearchServesGroupEntries: a subtree search under the groups base returns
