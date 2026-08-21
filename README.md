@@ -26,6 +26,16 @@ environment variables; the table below mirrors it for convenience.
 
 ### Running as a systemd service
 
+systemd is Linux-only, so `/usr/local/bin/ldap-bridge` must be a Linux binary.
+`go build` targets the OS/arch it runs on, so building on Windows or macOS
+produces a binary systemd can't execute — cross-compile for Linux instead:
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o bin/ldap-bridge ./cmd/ldap-bridge
+```
+
+(on Windows/PowerShell: `$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o bin/ldap-bridge ./cmd/ldap-bridge`)
+
 Example unit running the built binary, reading config from an env file:
 
 ```ini
