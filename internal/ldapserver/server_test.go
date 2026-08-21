@@ -240,6 +240,42 @@ func TestSearchBackendErrorFailsNotEmpty(t *testing.T) {
 	}
 }
 
+// TestSearchWithoutBindRejected: by default a search on a connection that never
+// bound (or only did an anonymous bind) is rejected.
+func TestSearchWithoutBindRejected(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local"})
+	addr := startServer(t, repo)
+
+	_, err := dial(t, addr).Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: "(uid=johndoe)",
+	})
+	if err == nil {
+		t.Fatal("search without bind succeeded, want rejection")
+	}
+	if !ldap.IsErrorWithCode(err, ldap.LDAPResultInsufficientAccessRights) {
+		t.Fatalf("got %v, want InsufficientAccessRights", err)
+	}
+}
+
+// TestSearchAllowAnonymousReads: with AllowAnonymousReads set, a search
+// succeeds without any prior bind.
+func TestSearchAllowAnonymousReads(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local"})
+	addr := startServerSchema(t, repo, Schema{BaseUserDN: testBaseDN, AllowAnonymousReads: true})
+
+	res, err := dial(t, addr).Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: "(uid=johndoe)",
+	})
+	if err != nil {
+		t.Fatalf("search without bind failed: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(res.Entries))
+	}
+}
+
 const testGroupBaseDN = "ou=groups,dc=icewarp,dc=local"
 
 // groupSchema enables both subtrees for the wire group tests.

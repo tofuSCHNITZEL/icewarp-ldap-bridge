@@ -29,18 +29,19 @@ environment variables; the table below mirrors it for convenience.
 The IceWarp backend is configured via environment variables (defaults target the
 dev stack):
 
-| Variable                 | Default                         | Notes                                                                                             |
-| ------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `ICEWARP_URL`            | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                                                |
-| `ICEWARP_DOMAIN`         | `icewarp.local`                 | mail domain                                                                                       |
-| `ICEWARP_ADMIN_EMAIL`    | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                                                     |
-| `ICEWARP_ADMIN_PASSWORD` | _(required)_                    | no default; set it (the dev value is in `.env.example`)                                           |
-| `LDAP_USER_BASE_DN`      | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                                                        |
-| `LDAP_EMAIL_AS_UID`      | _(off)_                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username")                      |
-| `LDAP_GROUP_BASE_DN`     | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it |
-| `CACHE_REFRESH_INTERVAL` | `10m`                           | how often the cached directory snapshot is refreshed; `0`/`off` serves every read from IceWarp    |
-| `LOG_LEVEL`              | `info`                          | `debug` \| `info` \| `warn` \| `error`                                                            |
-| `INTROSPECT_ICEWARP`     | _(off)_                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk                               |
+| Variable                     | Default                         | Notes                                                                                             |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ICEWARP_URL`                | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                                                |
+| `ICEWARP_DOMAIN`             | `icewarp.local`                 | mail domain                                                                                       |
+| `ICEWARP_ADMIN_EMAIL`        | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                                                     |
+| `ICEWARP_ADMIN_PASSWORD`     | _(required)_                    | no default; set it (the dev value is in `.env.example`)                                           |
+| `LDAP_USER_BASE_DN`          | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                                                        |
+| `LDAP_EMAIL_AS_UID`          | _(off)_                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username")                      |
+| `LDAP_GROUP_BASE_DN`         | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it |
+| `LDAP_ALLOW_ANONYMOUS_READS` | _(off)_                         | serve searches on connections without a bind (anonymous read access)                              |
+| `CACHE_REFRESH_INTERVAL`     | `10m`                           | how often the cached directory snapshot is refreshed; `0`/`off` serves every read from IceWarp    |
+| `LOG_LEVEL`                  | `info`                          | `debug` \| `info` \| `warn` \| `error`                                                            |
+| `INTROSPECT_ICEWARP`         | _(off)_                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk                               |
 
 Logging is `log/slog` to stderr. At `debug` the server logs one line per incoming
 LDAP request and one per outgoing IceWarp RPC call.

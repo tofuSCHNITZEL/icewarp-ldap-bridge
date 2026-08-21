@@ -162,7 +162,7 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 		resp.SetResultCode(gldap.ResultSuccess)
 		return
 	}
-	if !s.isAuthed(r.ConnectionID()) {
+	if !s.schema.AllowAnonymousReads && !s.isAuthed(r.ConnectionID()) {
 		resp.SetResultCode(gldap.ResultInsufficientAccessRights)
 		return
 	}

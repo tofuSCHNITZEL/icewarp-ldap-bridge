@@ -32,6 +32,7 @@ var envVars = []struct{ name, def, desc string }{
 	{"LDAP_USER_BASE_DN", "ou=people,dc=icewarp,dc=local", "DN users are exposed under"},
 	{"LDAP_EMAIL_AS_UID", "", "expose the primary email as the uid/RDN, for Keycloak's \"Use email as username\"; off when empty"},
 	{"LDAP_GROUP_BASE_DN", "ou=groups,dc=icewarp,dc=local", "serve groups as LDAP entries under this DN and add memberOf to users (Keycloak Group mapper); empty disables it"},
+	{"LDAP_ALLOW_ANONYMOUS_READS", "", "serve searches on connections without a bind (anonymous read access); off when empty"},
 	{"CACHE_REFRESH_INTERVAL", "10m", "how often the cached directory snapshot is refreshed (Go duration); 0 or off serves every read from IceWarp"},
 	{"LOG_LEVEL", "info", "log level: debug | info | warn | error"},
 	{"INTROSPECT_ICEWARP", "", "dir (or a truthy value) to dump raw IceWarp RPC bodies; off when empty"},
@@ -46,10 +47,11 @@ func main() {
 	logger := newLogger(env("LOG_LEVEL"))
 
 	schema := ldapserver.Schema{
-		BaseUserDN:  env("LDAP_USER_BASE_DN"),
-		Domain:      env("ICEWARP_DOMAIN"),
-		EmailAsUID:  truthy(env("LDAP_EMAIL_AS_UID")),
-		GroupBaseDN: optionalEnv("LDAP_GROUP_BASE_DN"),
+		BaseUserDN:          env("LDAP_USER_BASE_DN"),
+		Domain:              env("ICEWARP_DOMAIN"),
+		EmailAsUID:          truthy(env("LDAP_EMAIL_AS_UID")),
+		GroupBaseDN:         optionalEnv("LDAP_GROUP_BASE_DN"),
+		AllowAnonymousReads: truthy(env("LDAP_ALLOW_ANONYMOUS_READS")),
 	}
 
 	// Stop the server on SIGINT/SIGTERM so in-flight requests and the cached

@@ -33,6 +33,13 @@ type Schema struct {
 	// attribute (the group DNs) to user entries. Point a Keycloak Group LDAP
 	// mapper at it. Empty disables group entries and memberOf.
 	GroupBaseDN string
+
+	// AllowAnonymousReads, when true, serves search requests on a connection
+	// that never completed a bind (or only did an anonymous/RFC 4513 bind),
+	// instead of rejecting them with InsufficientAccessRights. Bind (and thus
+	// password validation) is unaffected. Off by default, since it exposes the
+	// directory to any client that can reach the port.
+	AllowAnonymousReads bool
 }
 
 // userObjectClasses is the objectClass set every presented user carries.
