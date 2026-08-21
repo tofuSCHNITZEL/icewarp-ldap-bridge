@@ -168,13 +168,14 @@ fields.
 
 ### Groups
 
-The bridge exposes IceWarp groups (accounttype 7) read-only as LDAP entries
-(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`): each group is an
-entry (`cn=<group>,<base>`, objectClass `groupOfNames`, `member` = user DNs) and
-each user entry gains a `memberOf` of group DNs. Point a Keycloak _Group LDAP
-mapper_ at the base DN to import them as Keycloak **groups** (hierarchy, role
-mappings); for a plain group claim, add a _Group Membership_ protocol mapper on
-top. Set the env var empty to disable groups entirely.
+The bridge exposes IceWarp groups and mailing lists (accounttype 7 and 1) read-only
+as LDAP entries (`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`):
+each group/mailing list is an entry (`cn=<group>,<base>`, objectClass
+`groupOfNames`, `member` = user DNs) and each user entry gains a `memberOf` of
+group DNs. Point a Keycloak _Group LDAP mapper_ at the base DN to import them as
+Keycloak **groups** (hierarchy, role mappings); for a plain group claim, add a
+_Group Membership_ protocol mapper on top. Set the env var empty to disable
+groups entirely.
 
 **Use the mapper's `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` retrieve strategy** (the
 Keycloak default). It lines up with IceWarp's native lookups, so no operation

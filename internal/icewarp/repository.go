@@ -30,7 +30,7 @@ type accountAPI interface {
 	SetAccountProperties(ctx context.Context, email string, props ...WriteProperty) error
 	SetAccountCard(ctx context.Context, email string, card AccountCard) error
 	DeleteAccounts(ctx context.Context, domain string, emails ...string) error
-	ListGroups(ctx context.Context, domain string, offset, count int) ([]Account, int, error)
+	ListGroups(ctx context.Context, domain string, accountType, offset, count int) ([]Account, int, error)
 	GetGroupMembers(ctx context.Context, groupEmail string, offset, count int) ([]string, int, error)
 }
 
@@ -251,31 +251,39 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
-// ListGroups returns the domain's groups (accounttype 7) as lightweight Group
-// values (Name only); members are resolved per-group via GroupMembers.
+// groupAccountTypes are the IceWarp accounttypes exposed as LDAP groups: 7
+// (group) and 1 (mailing list) — see docs/icewarp-api.md.
+var groupAccountTypes = []int{7, 1}
+
+// ListGroups returns the domain's groups and mailing lists (accounttypes 7 and
+// 1) as lightweight Group values (Name only); members are resolved per-group
+// via GroupMembers.
 func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
 
 	const pageSize = 250
 	var groups []users.Group
-	for offset := 0; ; {
-		page, total, err := r.client.ListGroups(ctx, r.domain, offset, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		for _, a := range page {
-			groups = append(groups, users.Group{Name: localPart(a.Email)})
-		}
-		offset += len(page)
-		if len(page) == 0 || offset >= total {
-			return groups, nil
-		}
-		if len(groups) >= maxListAccounts {
-			r.logger.Warn("ListGroups: cap reached, truncating", "cap", maxListAccounts, "domain", r.domain)
-			return groups, nil
+	for _, accountType := range groupAccountTypes {
+		for offset := 0; ; {
+			page, total, err := r.client.ListGroups(ctx, r.domain, accountType, offset, pageSize)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range page {
+				groups = append(groups, users.Group{Name: localPart(a.Email)})
+			}
+			offset += len(page)
+			if len(groups) >= maxListAccounts {
+				r.logger.Warn("ListGroups: cap reached, truncating", "cap", maxListAccounts, "domain", r.domain)
+				return groups, nil
+			}
+			if len(page) == 0 || offset >= total {
+				break
+			}
 		}
 	}
+	return groups, nil
 }
 
 // GroupMembers returns the member usernames of a group, or ErrNotFound if the

@@ -214,7 +214,7 @@ func TestClientE2EGroups(t *testing.T) {
 
 	// The forward direction: the group is listed, and its member list contains
 	// the user (drives the LDAP group entries / member attribute).
-	groups, _, err := client.ListGroups(withTimeout(t, 30*time.Second), domain, 0, 0)
+	groups, _, err := client.ListGroups(withTimeout(t, 30*time.Second), domain, 7, 0, 0)
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
 	}

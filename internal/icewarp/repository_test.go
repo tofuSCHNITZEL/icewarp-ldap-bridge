@@ -45,10 +45,10 @@ type mockClient struct {
 	deleteDomain string
 	deleteEmails []string
 
-	groupAccounts []Account
-	groupTotal    int
-	memberWho     string
-	members       []string
+	groupAccountsByType map[int][]Account
+	groupTotalByType    map[int]int
+	memberWho           string
+	members             []string
 }
 
 func (m *mockClient) GetAuthToken(_ context.Context, email, password string) (*AuthToken, error) {
@@ -100,8 +100,8 @@ func (m *mockClient) DeleteAccounts(_ context.Context, domain string, emails ...
 	return nil
 }
 
-func (m *mockClient) ListGroups(_ context.Context, _ string, _, _ int) ([]Account, int, error) {
-	return m.groupAccounts, m.groupTotal, nil
+func (m *mockClient) ListGroups(_ context.Context, _ string, accountType, _, _ int) ([]Account, int, error) {
+	return m.groupAccountsByType[accountType], m.groupTotalByType[accountType], nil
 }
 
 func (m *mockClient) GetGroupMembers(_ context.Context, groupEmail string, _, _ int) ([]string, int, error) {
@@ -489,11 +489,13 @@ func TestListAllCap(t *testing.T) {
 
 func TestRepositoryListGroups(t *testing.T) {
 	mock := &mockClient{
-		groupAccounts: []Account{
-			{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7},
-			{Name: "Public Folders", Email: "public-folders@icewarp.local", AccountType: 7},
+		groupAccountsByType: map[int][]Account{
+			7: {
+				{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7},
+				{Name: "Public Folders", Email: "public-folders@icewarp.local", AccountType: 7},
+			},
 		},
-		groupTotal: 2,
+		groupTotalByType: map[int]int{7: 2},
 	}
 	groups, err := newRepo(mock).ListGroups(context.Background())
 	if err != nil {
@@ -505,6 +507,29 @@ func TestRepositoryListGroups(t *testing.T) {
 	// Lightweight: members are not resolved here.
 	if groups[0].Members != nil {
 		t.Errorf("ListGroups should not resolve members: %v", groups[0].Members)
+	}
+}
+
+// TestRepositoryListGroupsIncludesMailingLists: ListGroups merges accounttype 7
+// (group) and accounttype 1 (mailing list) results.
+func TestRepositoryListGroupsIncludesMailingLists(t *testing.T) {
+	mock := &mockClient{
+		groupAccountsByType: map[int][]Account{
+			7: {{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7}},
+			1: {{Name: "Announce", Email: "announce@icewarp.local", AccountType: 1}},
+		},
+		groupTotalByType: map[int]int{7: 1, 1: 1},
+	}
+	groups, err := newRepo(mock).ListGroups(context.Background())
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = g.Name
+	}
+	if !slices.Equal(names, []string{"group1", "announce"}) {
+		t.Fatalf("groups: got %v, want [group1 announce]", names)
 	}
 }
 
