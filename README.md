@@ -24,6 +24,60 @@ go run ./cmd/ldap-bridge -addr :3391   # custom listen address
 `ldap-bridge --help` is the authoritative reference for the flags and
 environment variables; the table below mirrors it for convenience.
 
+### Running as a systemd service
+
+Example unit running the built binary, reading config from an env file:
+
+```ini
+# /etc/systemd/system/ldap-bridge.service
+[Unit]
+Description=IceWarp LDAP Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/ldap-bridge/ldap-bridge.env
+ExecStart=/usr/local/bin/ldap-bridge -addr :3389
+Restart=on-failure
+RestartSec=5s
+User=ldap-bridge
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/ldap-bridge/ldap-bridge.env` holds the `ICEWARP_*`/`LDAP_*` variables from
+the table below (same format as `.env`); keep it `chmod 600`, since it carries
+`ICEWARP_ADMIN_PASSWORD`. `DynamicUser=yes` runs the service as an ephemeral
+unprivileged user; drop it (and set a real `User=`) if the env file needs
+group-based access instead. `AmbientCapabilities=CAP_NET_BIND_SERVICE` is only
+needed if `-addr` binds a privileged port (<1024).
+
+Alternatively, skip the env file by removing `EnvironmentFile=` and set the variables directly in the unit with
+`Environment=` (one variable per line, so no quoting/escaping surprises with
+special characters):
+
+```ini
+Environment=ICEWARP_URL=http://icewarp:80/icewarpapi/
+Environment=ICEWARP_DOMAIN=icewarp.local
+Environment=ICEWARP_ADMIN_EMAIL=admin@icewarp.local
+Environment=ICEWARP_ADMIN_PASSWORD=changeme
+```
+
+Since the unit file itself then carries `ICEWARP_ADMIN_PASSWORD`, restrict it
+with `chmod 600` (unit files under `/etc/systemd/system/` are root-owned by
+default, but double-check) and prefer `EnvironmentFile=` when the secret needs
+to be managed separately from the unit (e.g. deployed/rotated independently).
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now ldap-bridge
+journalctl -u ldap-bridge -f   # follow logs
+```
+
 ### Configuration
 
 The IceWarp backend is configured via environment variables (defaults target the
