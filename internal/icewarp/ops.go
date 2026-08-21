@@ -37,7 +37,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 
 // GetAuthToken validates a user's password by binding as them (no admin session
 // needed). It returns the auth token plus the account's name on success, or
-// ErrInvalidCredentials / ErrAccountDisabled on failure.
+// ErrInvalidCredentials / ErrAccountDisabled / ErrTwoFactorRequired on failure.
 //
 // The invalid-credentials path is tarpitted ~25-30s server-side; the context
 // timeout for this call should be >= 60s.
@@ -58,6 +58,8 @@ func (c *Client) GetAuthToken(ctx context.Context, email, password string) (*Aut
 				return nil, ErrInvalidCredentials
 			case "account_disabled_2":
 				return nil, ErrAccountDisabled
+			case "auth_two_factor_required":
+				return nil, ErrTwoFactorRequired
 			}
 		}
 		return nil, err
