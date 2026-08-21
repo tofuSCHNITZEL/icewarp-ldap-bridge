@@ -93,19 +93,20 @@ journalctl -u ldap-bridge -f   # follow logs
 The IceWarp backend is configured via environment variables (defaults target the
 dev stack):
 
-| Variable                     | Default                         | Notes                                                                                             |
-| ---------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `ICEWARP_URL`                | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                                                |
-| `ICEWARP_DOMAIN`             | `icewarp.local`                 | mail domain                                                                                       |
-| `ICEWARP_ADMIN_EMAIL`        | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                                                     |
-| `ICEWARP_ADMIN_PASSWORD`     | _(required)_                    | no default; set it (the dev value is in `.env.example`)                                           |
-| `LDAP_USER_BASE_DN`          | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                                                        |
-| `LDAP_EMAIL_AS_UID`          | _(off)_                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username")                      |
-| `LDAP_GROUP_BASE_DN`         | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it |
-| `LDAP_ALLOW_ANONYMOUS_READS` | _(off)_                         | serve searches on connections without a bind (anonymous read access)                              |
-| `CACHE_REFRESH_INTERVAL`     | `10m`                           | how often the cached directory snapshot is refreshed; `0`/`off` serves every read from IceWarp    |
-| `LOG_LEVEL`                  | `info`                          | `debug` \| `info` \| `warn` \| `error`                                                            |
-| `INTROSPECT_ICEWARP`         | _(off)_                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk                               |
+| Variable                           | Default                         | Notes                                                                                              |
+| ---------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ICEWARP_URL`                      | `http://icewarp:80/icewarpapi/` | admin RPC endpoint                                                                                 |
+| `ICEWARP_DOMAIN`                   | `icewarp.local`                 | mail domain                                                                                        |
+| `ICEWARP_ADMIN_EMAIL`              | `admin@<ICEWARP_DOMAIN>`        | service account; must be an IceWarp **admin**                                                      |
+| `ICEWARP_ADMIN_PASSWORD`           | _(required)_                    | no default; set it (the dev value is in `.env.example`)                                            |
+| `LDAP_USER_BASE_DN`                | `ou=people,dc=icewarp,dc=local` | DN users are exposed under                                                                         |
+| `LDAP_EMAIL_AS_UID`                | _(off)_                         | expose the primary email as the `uid`/RDN (Keycloak "Use email as username")                       |
+| `LDAP_GROUP_BASE_DN`               | `ou=groups,dc=icewarp,dc=local` | serve groups as LDAP entries + add `memberOf` to users (Keycloak Group mapper); empty disables it  |
+| `LDAP_GROUP_INCLUDE_MAILING_LISTS` | _(off)_                         | also expose IceWarp mailing lists (accounttype 1) as LDAP groups, alongside groups (accounttype 7) |
+| `LDAP_ALLOW_ANONYMOUS_READS`       | _(off)_                         | serve searches on connections without a bind (anonymous read access)                               |
+| `CACHE_REFRESH_INTERVAL`           | `10m`                           | how often the cached directory snapshot is refreshed; `0`/`off` serves every read from IceWarp     |
+| `LOG_LEVEL`                        | `info`                          | `debug` \| `info` \| `warn` \| `error`                                                             |
+| `INTROSPECT_ICEWARP`               | _(off)_                         | a dir (or truthy) dumps raw IceWarp request/response bodies to disk                                |
 
 Logging is `log/slog` to stderr. At `debug` the server logs one line per incoming
 LDAP request and one per outgoing IceWarp RPC call.
@@ -168,14 +169,16 @@ fields.
 
 ### Groups
 
-The bridge exposes IceWarp groups and mailing lists (accounttype 7 and 1) read-only
-as LDAP entries (`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`):
-each group/mailing list is an entry (`cn=<group>,<base>`, objectClass
-`groupOfNames`, `member` = user DNs) and each user entry gains a `memberOf` of
-group DNs. Point a Keycloak _Group LDAP mapper_ at the base DN to import them as
-Keycloak **groups** (hierarchy, role mappings); for a plain group claim, add a
-_Group Membership_ protocol mapper on top. Set the env var empty to disable
-groups entirely.
+The bridge exposes IceWarp groups (accounttype 7) read-only as LDAP entries
+(`LDAP_GROUP_BASE_DN`, default `ou=groups,dc=icewarp,dc=local`): each group is an
+entry (`cn=<group>,<base>`, objectClass `groupOfNames`, `member` = user DNs) and
+each user entry gains a `memberOf` of group DNs. Point a Keycloak _Group LDAP
+mapper_ at the base DN to import them as Keycloak **groups** (hierarchy, role
+mappings); for a plain group claim, add a _Group Membership_ protocol mapper on
+top. Set the env var empty to disable groups entirely.
+
+Set `LDAP_GROUP_INCLUDE_MAILING_LISTS` to also expose IceWarp mailing lists
+(accounttype 1) the same way, alongside groups; off by default.
 
 **Use the mapper's `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` retrieve strategy** (the
 Keycloak default). It lines up with IceWarp's native lookups, so no operation

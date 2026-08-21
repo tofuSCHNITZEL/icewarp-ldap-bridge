@@ -39,19 +39,33 @@ var _ accountAPI = (*Client)(nil)
 // Repository is a users.Repository backed by the IceWarp admin RPC API. It maps
 // a username to the account "<username>@<domain>" and keeps no LDAP knowledge.
 type Repository struct {
-	client accountAPI
-	domain string
-	logger *slog.Logger
+	client              accountAPI
+	domain              string
+	logger              *slog.Logger
+	includeMailingLists bool
 }
 
 var _ users.Repository = (*Repository)(nil)
 
+// RepositoryOption configures optional Repository behavior.
+type RepositoryOption func(*Repository)
+
+// WithMailingLists includes IceWarp mailing lists (accounttype 1) in
+// ListGroups alongside groups (accounttype 7). Excluded by default.
+func WithMailingLists() RepositoryOption {
+	return func(r *Repository) { r.includeMailingLists = true }
+}
+
 // NewRepository returns an IceWarp-backed user repository for a mail domain.
-func NewRepository(client *Client, domain string, logger *slog.Logger) *Repository {
+func NewRepository(client *Client, domain string, logger *slog.Logger, opts ...RepositoryOption) *Repository {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &Repository{client: client, domain: domain, logger: logger}
+	r := &Repository{client: client, domain: domain, logger: logger}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // email qualifies a mailbox local part with the domain. It is idempotent: a
@@ -251,20 +265,21 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
-// groupAccountTypes are the IceWarp accounttypes exposed as LDAP groups: 7
-// (group) and 1 (mailing list) — see docs/icewarp-api.md.
-var groupAccountTypes = []int{7, 1}
-
-// ListGroups returns the domain's groups and mailing lists (accounttypes 7 and
-// 1) as lightweight Group values (Name only); members are resolved per-group
-// via GroupMembers.
+// ListGroups returns the domain's groups (accounttype 7), plus mailing lists
+// (accounttype 1) if WithMailingLists was set, as lightweight Group values
+// (Name only); members are resolved per-group via GroupMembers.
 func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
 
+	accountTypes := []int{7}
+	if r.includeMailingLists {
+		accountTypes = append(accountTypes, 1)
+	}
+
 	const pageSize = 250
 	var groups []users.Group
-	for _, accountType := range groupAccountTypes {
+	for _, accountType := range accountTypes {
 		for offset := 0; ; {
 			page, total, err := r.client.ListGroups(ctx, r.domain, accountType, offset, pageSize)
 			if err != nil {

@@ -113,6 +113,12 @@ func newRepo(client accountAPI) *Repository {
 	return &Repository{client: client, domain: "icewarp.local", logger: slog.New(slog.DiscardHandler)}
 }
 
+func newRepoWithMailingLists(client accountAPI) *Repository {
+	r := newRepo(client)
+	r.includeMailingLists = true
+	return r
+}
+
 func TestRepositoryCreate(t *testing.T) {
 	mock := &mockClient{}
 	err := newRepo(mock).Create(context.Background(), users.User{
@@ -510,9 +516,32 @@ func TestRepositoryListGroups(t *testing.T) {
 	}
 }
 
-// TestRepositoryListGroupsIncludesMailingLists: ListGroups merges accounttype 7
-// (group) and accounttype 1 (mailing list) results.
+// TestRepositoryListGroupsIncludesMailingLists: WithMailingLists merges
+// accounttype 7 (group) and accounttype 1 (mailing list) results.
 func TestRepositoryListGroupsIncludesMailingLists(t *testing.T) {
+	mock := &mockClient{
+		groupAccountsByType: map[int][]Account{
+			7: {{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7}},
+			1: {{Name: "Announce", Email: "announce@icewarp.local", AccountType: 1}},
+		},
+		groupTotalByType: map[int]int{7: 1, 1: 1},
+	}
+	groups, err := newRepoWithMailingLists(mock).ListGroups(context.Background())
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = g.Name
+	}
+	if !slices.Equal(names, []string{"group1", "announce"}) {
+		t.Fatalf("groups: got %v, want [group1 announce]", names)
+	}
+}
+
+// TestRepositoryListGroupsWithoutMailingLists: by default (no WithMailingLists)
+// accounttype 1 results are excluded, leaving only groups (accounttype 7).
+func TestRepositoryListGroupsWithoutMailingLists(t *testing.T) {
 	mock := &mockClient{
 		groupAccountsByType: map[int][]Account{
 			7: {{Name: "Group One", Email: "group1@icewarp.local", AccountType: 7}},
@@ -524,12 +553,8 @@ func TestRepositoryListGroupsIncludesMailingLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
 	}
-	names := make([]string, len(groups))
-	for i, g := range groups {
-		names[i] = g.Name
-	}
-	if !slices.Equal(names, []string{"group1", "announce"}) {
-		t.Fatalf("groups: got %v, want [group1 announce]", names)
+	if len(groups) != 1 || groups[0].Name != "group1" {
+		t.Fatalf("groups: got %+v, want just [group1]", groups)
 	}
 }
 
