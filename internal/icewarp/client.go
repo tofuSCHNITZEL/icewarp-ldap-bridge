@@ -46,6 +46,12 @@ var (
 	// ErrAccountDisabled is returned when the password is correct but the
 	// account is disabled. This failure is immediate (not tarpitted).
 	ErrAccountDisabled = errors.New("icewarp: account disabled")
+	// ErrTwoFactorRequired is returned when the password is correct but the
+	// account has 2FA enabled, so no auth token is issued. The server checks the
+	// password first (a wrong one still yields ErrInvalidCredentials) and the
+	// disabled check wins over this one, so it is a positive password result.
+	// This failure is immediate (not tarpitted).
+	ErrTwoFactorRequired = errors.New("icewarp: two-factor authentication required")
 )
 
 // Client talks to a single IceWarp admin RPC endpoint as one service account.

@@ -194,11 +194,19 @@ The bind primitive: validate a user's own password. **No admin session needed.**
   | -------------------- | --------------------------------------------- | ------- | ------------ |
   | `auth_login_invalid` | wrong password, **or** unknown account, **or** unknown domain | **tarpit ~25–30 s** | `LDAPResultInvalidCredentials` |
   | `account_disabled_2` | correct password but account is **disabled**  | **immediate** | `LDAPResultInvalidCredentials` |
+  | `auth_two_factor_required` | correct password but account has **2FA** enabled              | **immediate**       | `LDAPResultSuccess` — see below |
 
   Wrong password and unknown account return the **same** uid — no account
   enumeration. The disabled-account case is the one fast, distinguishable
   failure. See [§8](#8-failed-bind--anti-brute-force-tarpit) for timeout
   guidance.
+
+  **2FA accounts.** The server validates the password _before_ demanding the
+  second factor, and the disabled check still wins over it: a wrong password on
+  a 2FA account yields `auth_login_invalid`, a disabled 2FA account yields
+  `account_disabled_2`. So `auth_two_factor_required` is a positive password
+  result and the bridge treats it as a successful bind, leaving the second
+  factor to the LDAP consumer (Keycloak).
 
 ---
 
@@ -648,6 +656,7 @@ flags do not stick. Documented for completeness; the bridge does not need them.
 | ---------------------------------- | ------------------------------ | ------- | --------------------- |
 | `auth_login_invalid`               | `getauthtoken`, `authenticate` | wrong password / unknown account / unknown domain (**tarpit**) | `InvalidCredentials` |
 | `account_disabled_2`               | `getauthtoken`                 | correct password, account disabled (**immediate**) | `InvalidCredentials` |
+| `auth_two_factor_required`         | `getauthtoken`                                          | correct password, account has 2FA (**immediate**)              | `Success` (see [§3](#3-getauthtoken--ldap-user-bind-password-validation)) |
 | `session_invalid`                  | all session commands           | missing / expired / wrong `sid` | re-authenticate, retry |
 | `account_invalid`                  | `getaccountproperties`, `set*`, `*accountmembers` (§10) | no such account / group | `NoSuchObject` |
 | `account_email_parameter_missing`  | account commands               | `accountemail` omitted | `ProtocolError` (bridge bug) |

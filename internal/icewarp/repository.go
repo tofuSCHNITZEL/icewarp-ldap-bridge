@@ -69,6 +69,12 @@ func (r *Repository) Authenticate(ctx context.Context, username, password string
 	defer cancel()
 
 	if _, err := r.client.GetAuthToken(ctx, r.email(username), password); err != nil {
+		// 2FA accounts get no auth token, but the password was verified before the
+		// factor was demanded, so the bind succeeds and the second factor is left
+		// to the LDAP consumer (Keycloak).
+		if errors.Is(err, ErrTwoFactorRequired) {
+			return nil
+		}
 		if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrAccountDisabled) {
 			return users.ErrInvalidCredentials
 		}

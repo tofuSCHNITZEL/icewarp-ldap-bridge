@@ -313,6 +313,7 @@ func TestRepositoryAuthenticate(t *testing.T) {
 		{"valid", nil, nil},
 		{"wrong-password", ErrInvalidCredentials, users.ErrInvalidCredentials},
 		{"disabled", ErrAccountDisabled, users.ErrInvalidCredentials},
+		{"two-factor-required", ErrTwoFactorRequired, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
