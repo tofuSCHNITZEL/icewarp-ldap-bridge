@@ -15,14 +15,32 @@ import (
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
 )
 
-// rootDSE is the capability advertisement returned for a Root DSE query. It
-// lists the controls the server honors — notably paged results, which Keycloak
-// probes for before deciding whether to page.
-var rootDSE = map[string][]string{
+// staticRootDSE holds the capability advertisement fields that don't depend on
+// the configured schema — notably paged results, which Keycloak probes for
+// before deciding whether to page.
+var staticRootDSE = map[string][]string{
 	"objectClass":          {"top"},
 	"supportedLDAPVersion": {"3"},
 	"supportedControl":     {gldap.ControlTypePaging},
 	"vendorName":           {"IceWarp LDAP Bridge"},
+}
+
+// rootDSE builds the Root DSE attributes for this server. It includes
+// namingContexts (RFC 4512 §5.1) listing the DNs served (BaseUserDN and, if
+// enabled, GroupBaseDN) — interactive LDAP clients (Apache Directory Studio,
+// JXplorer, etc.) use it to discover a search base to browse from, and refuse
+// to proceed ("the LDAP server does not provide a search-base") without it.
+func (s *Server) rootDSE() map[string][]string {
+	attrs := make(map[string][]string, len(staticRootDSE)+1)
+	for k, v := range staticRootDSE {
+		attrs[k] = v
+	}
+	contexts := []string{s.schema.BaseUserDN}
+	if s.schema.GroupBaseDN != "" {
+		contexts = append(contexts, s.schema.GroupBaseDN)
+	}
+	attrs["namingContexts"] = contexts
+	return attrs
 }
 
 // Server is a gldap-based LDAP server backed by a users.Repository.
@@ -158,7 +176,7 @@ func (s *Server) search(w *gldap.ResponseWriter, r *gldap.Request) {
 
 	// Root DSE (empty base, base scope) is public capability info.
 	if m.BaseDN == "" && int64(m.Scope) == scopeBaseObject {
-		_ = w.Write(r.NewSearchResponseEntry("", gldap.WithAttributes(rootDSE)))
+		_ = w.Write(r.NewSearchResponseEntry("", gldap.WithAttributes(s.rootDSE())))
 		resp.SetResultCode(gldap.ResultSuccess)
 		return
 	}

@@ -276,6 +276,29 @@ func TestSearchAllowAnonymousReads(t *testing.T) {
 	}
 }
 
+// TestRootDSENamingContexts: interactive LDAP clients (Apache Directory Studio,
+// JXplorer, etc.) read namingContexts off the Root DSE to discover a search
+// base and refuse to browse without one.
+func TestRootDSENamingContexts(t *testing.T) {
+	repo := memory.New()
+	addr := startServerSchema(t, repo, groupSchema())
+
+	res, err := dial(t, addr).Search(ldap.NewSearchRequest(
+		"", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false,
+		"(objectClass=*)", []string{"namingContexts"}, nil,
+	))
+	if err != nil {
+		t.Fatalf("root DSE search: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(res.Entries))
+	}
+	contexts := res.Entries[0].GetAttributeValues("namingContexts")
+	if !contains(contexts, testBaseDN) || !contains(contexts, testGroupBaseDN) {
+		t.Fatalf("namingContexts = %v, want %v and %v", contexts, testBaseDN, testGroupBaseDN)
+	}
+}
+
 const testGroupBaseDN = "ou=groups,dc=icewarp,dc=local"
 const testOrgDN = "dc=icewarp,dc=local" // shared parent of testBaseDN/testGroupBaseDN
 

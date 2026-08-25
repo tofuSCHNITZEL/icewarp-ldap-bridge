@@ -66,7 +66,7 @@ func TestRootDSE(t *testing.T) {
 	req := ldap.NewSearchRequest(
 		"", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false,
 		"(objectClass=*)",
-		[]string{"supportedControl", "supportedLDAPVersion"},
+		[]string{"supportedControl", "supportedLDAPVersion", "namingContexts"},
 		nil,
 	)
 	res, err := conn.Search(req)
@@ -81,6 +81,12 @@ func TestRootDSE(t *testing.T) {
 	controls := res.Entries[0].GetAttributeValues("supportedControl")
 	if !contains(controls, pagingOID) {
 		t.Fatalf("root DSE supportedControl %v does not advertise paged results (%s)", controls, pagingOID)
+	}
+
+	// Interactive LDAP clients (Apache Directory Studio, JXplorer, etc.) refuse
+	// to browse without at least one advertised naming context.
+	if contexts := res.Entries[0].GetAttributeValues("namingContexts"); len(contexts) == 0 {
+		t.Fatal("root DSE namingContexts is empty, clients cannot discover a search base")
 	}
 }
 
