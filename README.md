@@ -179,9 +179,10 @@ top. Set the env var empty to disable groups entirely.
 
 Set `LDAP_GROUP_INCLUDE_MAILING_LISTS` to also expose IceWarp mailing lists
 (accounttype 1) the same way, alongside groups; off by default. The IceWarp
-display name of each group or mailing list is exposed as its LDAP `cn` and
-`description`; `cn` falls back to the mailbox local part if the display name is
-empty. The group `uid` is always the mailbox local part (the former `cn` value),
+display name of each group or mailing list is exposed as its LDAP `cn`,
+`description`, and `displayName`; `cn` falls back to the mailbox local part if
+the display name is empty, while `description` and `displayName` are omitted.
+The group `uid` is always the mailbox local part (the former `cn` value),
 regardless of `LDAP_EMAIL_AS_UID`. Group DNs and `memberOf` references still use
 the mailbox local part
 (`cn=<mailbox>,<group base DN>`) and remain stable when the display name changes.

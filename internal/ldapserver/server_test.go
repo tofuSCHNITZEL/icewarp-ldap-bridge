@@ -452,6 +452,9 @@ func TestSearchServesGroupEntries(t *testing.T) {
 	if got := e.GetAttributeValue("description"); got != "Group One" {
 		t.Errorf("group description: got %q, want %q", got, "Group One")
 	}
+	if got := e.GetAttributeValue("displayname"); got != "Group One" {
+		t.Errorf("group displayName: got %q, want %q", got, "Group One")
+	}
 	members := e.GetAttributeValues("member")
 	if len(members) != 2 || members[0] != "uid=johndoe,"+testBaseDN || members[1] != "uid=jane,"+testBaseDN {
 		t.Errorf("member DNs: %v", members)
@@ -480,6 +483,8 @@ func TestSearchGroupsByDisplayName(t *testing.T) {
 		{"membership", testGroupBaseDN, ldap.ScopeWholeSubtree, "(&(cn=Group One)(member=uid=johndoe," + testBaseDN + "))"},
 		{"uid", testGroupBaseDN, ldap.ScopeWholeSubtree, "(uid=group1)"},
 		{"uid base object", "cn=group1," + testGroupBaseDN, ldap.ScopeBaseObject, "(uid=group1)"},
+		{"displayName subtree", testGroupBaseDN, ldap.ScopeWholeSubtree, "(displayName=Group One)"},
+		{"displayName base object", "cn=group1," + testGroupBaseDN, ldap.ScopeBaseObject, "(displayName=Group One)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := conn.Search(&ldap.SearchRequest{
@@ -497,6 +502,9 @@ func TestSearchGroupsByDisplayName(t *testing.T) {
 			}
 			if got := e.GetAttributeValue("uid"); got != "group1" {
 				t.Errorf("group uid: got %q, want %q", got, "group1")
+			}
+			if got := e.GetAttributeValue("displayname"); got != "Group One" {
+				t.Errorf("group displayName: got %q, want %q", got, "Group One")
 			}
 		})
 	}

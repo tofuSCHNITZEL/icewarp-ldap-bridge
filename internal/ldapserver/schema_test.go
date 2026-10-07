@@ -145,6 +145,9 @@ func TestGroupSchema(t *testing.T) {
 	if got := a["description"]; len(got) != 1 || got[0] != "Group One" {
 		t.Errorf("group description: %v", got)
 	}
+	if got := a["displayname"]; len(got) != 1 || got[0] != "Group One" {
+		t.Errorf("group displayName: %v", got)
+	}
 	if len(a["entryuuid"]) != 1 || a["entryuuid"][0] == "" {
 		t.Errorf("group entryuuid missing: %v", a["entryuuid"])
 	}
@@ -161,6 +164,9 @@ func TestGroupSchema(t *testing.T) {
 	}
 	if _, ok := withoutDisplayName["description"]; ok {
 		t.Error("empty group description emitted")
+	}
+	if _, ok := withoutDisplayName["displayname"]; ok {
+		t.Error("empty group displayName emitted")
 	}
 	if a["entryuuid"][0] != withoutDisplayName["entryuuid"][0] {
 		t.Error("group entryUUID depends on display name")

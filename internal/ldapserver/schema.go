@@ -82,6 +82,7 @@ func (s Schema) groupAttrs(g users.Group) map[string][]string {
 	if g.Description != "" {
 		a["cn"] = []string{g.Description}
 		a["description"] = []string{g.Description}
+		a["displayname"] = []string{g.Description}
 	}
 	if len(g.Members) > 0 {
 		members := make([]string, len(g.Members))
