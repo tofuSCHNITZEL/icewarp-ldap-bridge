@@ -12,15 +12,15 @@ import (
 // Repository is a concurrency-safe in-memory user store.
 type Repository struct {
 	mu     sync.RWMutex
-	users  map[string]users.User // keyed by lower-cased username
-	groups map[string][]string   // group name -> member usernames, keyed by lower-cased name
+	users  map[string]users.User  // keyed by lower-cased username
+	groups map[string]users.Group // keyed by lower-cased group name
 }
 
 var _ users.Repository = (*Repository)(nil)
 
 // New returns an empty repository.
 func New() *Repository {
-	return &Repository{users: make(map[string]users.User), groups: make(map[string][]string)}
+	return &Repository{users: make(map[string]users.User), groups: make(map[string]users.Group)}
 }
 
 // Seed inserts a user directly, bypassing the duplicate check — for fixtures.
@@ -32,9 +32,14 @@ func (r *Repository) Seed(u users.User) {
 
 // SeedGroup inserts a group with the given member usernames — for fixtures.
 func (r *Repository) SeedGroup(name string, members ...string) {
+	r.SeedGroupDescription(name, "", members...)
+}
+
+// SeedGroupDescription inserts a group with an LDAP description — for fixtures.
+func (r *Repository) SeedGroupDescription(name, description string, members ...string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.groups[key(name)] = members
+	r.groups[key(name)] = users.Group{Name: name, Description: description, Members: members}
 }
 
 func (r *Repository) Authenticate(_ context.Context, username, password string) error {
@@ -131,8 +136,9 @@ func (r *Repository) ListGroups(_ context.Context) ([]users.Group, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]users.Group, 0, len(r.groups))
-	for name := range r.groups {
-		out = append(out, users.Group{Name: name})
+	for _, group := range r.groups {
+		group.Members = nil
+		out = append(out, group)
 	}
 	return out, nil
 }
@@ -140,11 +146,11 @@ func (r *Repository) ListGroups(_ context.Context) ([]users.Group, error) {
 func (r *Repository) GroupMembers(_ context.Context, name string) ([]string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	members, ok := r.groups[key(name)]
+	group, ok := r.groups[key(name)]
 	if !ok {
 		return nil, users.ErrNotFound
 	}
-	return append([]string(nil), members...), nil
+	return append([]string(nil), group.Members...), nil
 }
 
 func key(username string) string { return strings.ToLower(username) }

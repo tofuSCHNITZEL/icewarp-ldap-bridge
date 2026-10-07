@@ -508,8 +508,10 @@ func TestRepositoryListGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
 	}
-	if len(groups) != 2 || groups[0].Name != "group1" || groups[1].Name != "public-folders" {
-		t.Fatalf("groups: got %+v, want names [group1 public-folders]", groups)
+	if len(groups) != 2 ||
+		groups[0].Name != "group1" || groups[0].Description != "Group One" ||
+		groups[1].Name != "public-folders" || groups[1].Description != "Public Folders" {
+		t.Fatalf("groups: got %+v, want names and descriptions from IceWarp", groups)
 	}
 	// Lightweight: members are not resolved here.
 	if groups[0].Members != nil {
@@ -537,6 +539,9 @@ func TestRepositoryListGroupsIncludesMailingLists(t *testing.T) {
 	}
 	if !slices.Equal(names, []string{"group1", "announce"}) {
 		t.Fatalf("groups: got %v, want [group1 announce]", names)
+	}
+	if groups[1].Description != "Announce" {
+		t.Fatalf("mailing-list description: got %q, want %q", groups[1].Description, "Announce")
 	}
 }
 

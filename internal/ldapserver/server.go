@@ -347,23 +347,18 @@ func (s *Server) userCandidates(ctx context.Context, filter string) ([]users.Use
 }
 
 // searchGroups emits the group entries matching the search. Like the user flow
-// it prefilters on cheap attributes (cn, objectClass, entryUUID), then resolves
-// members only for the survivors. A base-scoped lookup of a single group DN
-// skips the enumeration entirely.
+// it prefilters on cheap attributes (cn, description, objectClass, entryUUID),
+// then resolves members only for the survivors.
 func (s *Server) searchGroups(w *gldap.ResponseWriter, r *gldap.Request, m *gldap.SearchMessage, base string, scope int64) error {
+	groups, err := s.repo.ListGroups(context.Background())
+	if err != nil {
+		return err
+	}
 	var candidates []users.Group
-	if name, ok := s.schema.groupNameFromDN(base); ok && scope == scopeBaseObject {
-		candidates = []users.Group{{Name: name}}
-	} else {
-		groups, err := s.repo.ListGroups(context.Background())
-		if err != nil {
-			return err
-		}
-		for _, g := range groups {
-			if inScope(normalizeDN(s.schema.groupDN(g.Name)), base, scope) &&
-				mayMatch(m.Filter, s.schema.groupAttrs(g), groupDeferredAttrs) {
-				candidates = append(candidates, g)
-			}
+	for _, g := range groups {
+		if inScope(normalizeDN(s.schema.groupDN(g.Name)), base, scope) &&
+			mayMatch(m.Filter, s.schema.groupAttrs(g), groupDeferredAttrs) {
+			candidates = append(candidates, g)
 		}
 	}
 
@@ -463,15 +458,15 @@ func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) ([]
 		}
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(name string) {
+		go func(group users.Group) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			members, err := s.repo.GroupMembers(ctx, name)
+			members, err := s.repo.GroupMembers(ctx, group.Name)
 			if err != nil {
 				if errors.Is(err, users.ErrNotFound) {
 					return
 				}
-				s.logger.Warn("ldap search: group enrich failed", "group", name, "err", err)
+				s.logger.Warn("ldap search: group enrich failed", "group", group.Name, "err", err)
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -479,10 +474,11 @@ func (s *Server) enrichGroups(ctx context.Context, candidates []users.Group) ([]
 				mu.Unlock()
 				return
 			}
+			group.Members = members
 			mu.Lock()
-			out = append(out, users.Group{Name: name, Members: members})
+			out = append(out, group)
 			mu.Unlock()
-		}(c.Name)
+		}(c)
 	}
 	wg.Wait()
 	return out, firstErr

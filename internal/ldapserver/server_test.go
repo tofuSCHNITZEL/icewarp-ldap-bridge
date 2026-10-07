@@ -421,7 +421,7 @@ func TestSearchServesGroupEntries(t *testing.T) {
 	repo := memory.New()
 	repo.Seed(users.User{Username: "johndoe", Email: "johndoe@icewarp.local", Password: "secret"})
 	repo.Seed(users.User{Username: "jane", Email: "jane@icewarp.local"})
-	repo.SeedGroup("group1", "johndoe", "jane")
+	repo.SeedGroupDescription("group1", "Group One", "johndoe", "jane")
 	addr := startServerSchema(t, repo, groupSchema())
 
 	conn := dial(t, addr)
@@ -443,9 +443,75 @@ func TestSearchServesGroupEntries(t *testing.T) {
 	if e.DN != "cn=group1,"+testGroupBaseDN {
 		t.Errorf("group DN: %q", e.DN)
 	}
+	if got := e.GetAttributeValue("cn"); got != "Group One" {
+		t.Errorf("group cn: got %q, want %q", got, "Group One")
+	}
+	if got := e.GetAttributeValue("uid"); got != "group1" {
+		t.Errorf("group uid: got %q, want %q", got, "group1")
+	}
+	if got := e.GetAttributeValue("description"); got != "Group One" {
+		t.Errorf("group description: got %q, want %q", got, "Group One")
+	}
 	members := e.GetAttributeValues("member")
 	if len(members) != 2 || members[0] != "uid=johndoe,"+testBaseDN || members[1] != "uid=jane,"+testBaseDN {
 		t.Errorf("member DNs: %v", members)
+	}
+}
+
+func TestSearchGroupsByDisplayName(t *testing.T) {
+	repo := memory.New()
+	repo.Seed(users.User{Username: "johndoe", Password: "secret", Groups: []string{"group1"}})
+	repo.SeedGroupDescription("group1", "Group One", "johndoe")
+	repo.SeedGroupDescription("group2", "Group Two", "jane")
+	addr := startServerSchema(t, repo, groupSchema())
+
+	conn := dial(t, addr)
+	if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		base   string
+		scope  int
+		filter string
+	}{
+		{"subtree", testGroupBaseDN, ldap.ScopeWholeSubtree, "(cn=Group One)"},
+		{"base object", "cn=group1," + testGroupBaseDN, ldap.ScopeBaseObject, "(cn=Group One)"},
+		{"membership", testGroupBaseDN, ldap.ScopeWholeSubtree, "(&(cn=Group One)(member=uid=johndoe," + testBaseDN + "))"},
+		{"uid", testGroupBaseDN, ldap.ScopeWholeSubtree, "(uid=group1)"},
+		{"uid base object", "cn=group1," + testGroupBaseDN, ldap.ScopeBaseObject, "(uid=group1)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := conn.Search(&ldap.SearchRequest{
+				BaseDN: tc.base, Scope: tc.scope, Filter: tc.filter,
+			})
+			if err != nil {
+				t.Fatalf("group search: %v", err)
+			}
+			if len(res.Entries) != 1 {
+				t.Fatalf("got %d entries, want 1", len(res.Entries))
+			}
+			e := res.Entries[0]
+			if e.DN != "cn=group1,"+testGroupBaseDN || e.GetAttributeValue("cn") != "Group One" {
+				t.Errorf("group identity: DN=%q cn=%q", e.DN, e.GetAttributeValue("cn"))
+			}
+			if got := e.GetAttributeValue("uid"); got != "group1" {
+				t.Errorf("group uid: got %q, want %q", got, "group1")
+			}
+		})
+	}
+	res, err := conn.Search(&ldap.SearchRequest{
+		BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree,
+		Filter: "(memberOf=cn=group1," + testGroupBaseDN + ")",
+	})
+	if err != nil {
+		t.Fatalf("membership search: %v", err)
+	}
+	if len(res.Entries) != 1 {
+		t.Fatalf("got %d members, want 1", len(res.Entries))
+	}
+	if got := res.Entries[0].GetAttributeValue("memberof"); got != "cn=group1,"+testGroupBaseDN {
+		t.Errorf("memberOf changed with display name: %q", got)
 	}
 }
 

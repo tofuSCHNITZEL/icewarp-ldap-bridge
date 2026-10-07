@@ -272,8 +272,9 @@ func (r *Repository) Delete(ctx context.Context, username string) error {
 }
 
 // ListGroups returns the domain's groups (accounttype 7), plus mailing lists
-// (accounttype 1) if WithMailingLists was set, as lightweight Group values
-// (Name only); members are resolved per-group via GroupMembers.
+// (accounttype 1) if WithMailingLists was set, as lightweight Group values.
+// The account display name becomes the LDAP description; members are resolved
+// per-group via GroupMembers.
 func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
@@ -292,7 +293,10 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 				return nil, err
 			}
 			for _, a := range page {
-				groups = append(groups, users.Group{Name: localPart(a.Email)})
+				groups = append(groups, users.Group{
+					Name:        localPart(a.Email),
+					Description: a.Name,
+				})
 			}
 			offset += len(page)
 			if len(groups) >= maxListAccounts {

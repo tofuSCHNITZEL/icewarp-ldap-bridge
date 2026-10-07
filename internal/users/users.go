@@ -46,10 +46,13 @@ type User struct {
 }
 
 // Group is a group of users, keyed by Name (the group's mailbox local part,
-// presented as the cn). Members are member usernames (mailbox local parts).
+// used in its LDAP DN and uid). Description is IceWarp's display name for the
+// group or mailing list, exposed as cn and description. Members are member usernames
+// (mailbox local parts).
 type Group struct {
-	Name    string
-	Members []string
+	Name        string
+	Description string
+	Members     []string
 }
 
 // Query narrows a List. The fields are pushdown hints — a backend uses them to

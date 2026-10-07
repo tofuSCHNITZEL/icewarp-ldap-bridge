@@ -128,13 +128,22 @@ func TestGroupSchema(t *testing.T) {
 	}
 
 	// Group entry attributes: objectClass, cn, member DNs, entryUUID.
-	g := users.Group{Name: "group1", Members: []string{"jdoe", "jane"}}
+	g := users.Group{Name: "group1", Description: "Group One", Members: []string{"jdoe", "jane"}}
 	a := s.groupAttrs(g)
-	if got := a["cn"]; len(got) != 1 || got[0] != "group1" {
+	if got := a["cn"]; len(got) != 1 || got[0] != "Group One" {
 		t.Errorf("group cn: %v", got)
+	}
+	if got := a["uid"]; len(got) != 1 || got[0] != g.Name {
+		t.Errorf("group uid: %v", got)
+	}
+	if got := (Schema{EmailAsUID: true, Domain: schemaDomain}).groupAttrs(g)["uid"]; len(got) != 1 || got[0] != g.Name {
+		t.Errorf("group uid with EmailAsUID: %v", got)
 	}
 	if got := a["member"]; len(got) != 2 || got[0] != "uid=jdoe,"+schemaBase || got[1] != "uid=jane,"+schemaBase {
 		t.Errorf("group member DNs: %v", got)
+	}
+	if got := a["description"]; len(got) != 1 || got[0] != "Group One" {
+		t.Errorf("group description: %v", got)
 	}
 	if len(a["entryuuid"]) != 1 || a["entryuuid"][0] == "" {
 		t.Errorf("group entryuuid missing: %v", a["entryuuid"])
@@ -142,6 +151,19 @@ func TestGroupSchema(t *testing.T) {
 	// Distinct from a same-named user's UUID.
 	if a["entryuuid"][0] == stableUUID("group1") {
 		t.Error("group entryUUID collides with user UUID")
+	}
+	withoutDisplayName := s.groupAttrs(users.Group{Name: g.Name})
+	if got := withoutDisplayName["cn"]; len(got) != 1 || got[0] != g.Name {
+		t.Errorf("group cn without display name: %v", got)
+	}
+	if got := withoutDisplayName["uid"]; len(got) != 1 || got[0] != g.Name {
+		t.Errorf("group uid without display name: %v", got)
+	}
+	if _, ok := withoutDisplayName["description"]; ok {
+		t.Error("empty group description emitted")
+	}
+	if a["entryuuid"][0] != withoutDisplayName["entryuuid"][0] {
+		t.Error("group entryUUID depends on display name")
 	}
 
 	// memberOf on user entries carries the group DNs.

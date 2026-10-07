@@ -25,8 +25,8 @@ const loadConcurrency = 8
 // snapshot is one immutable view of the directory. It is published as a whole
 // and never mutated afterward, so readers can use it without holding a lock.
 type snapshot struct {
-	users   map[string]users.User // keyed by lower-cased username
-	groups  map[string][]string   // lower-cased group name -> member usernames
+	users   map[string]users.User  // keyed by lower-cased username
+	groups  map[string]users.Group // keyed by lower-cased group name
 	takenAt time.Time
 }
 
@@ -132,8 +132,9 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 		return nil, err
 	}
 	out := make([]users.Group, 0, len(s.groups))
-	for name := range s.groups {
-		out = append(out, users.Group{Name: name})
+	for _, group := range s.groups {
+		group.Members = nil
+		out = append(out, group)
 	}
 	return out, nil
 }
@@ -143,8 +144,8 @@ func (r *Repository) GroupMembers(ctx context.Context, name string) ([]string, e
 	if err != nil {
 		return nil, err
 	}
-	if members, ok := s.groups[key(name)]; ok {
-		return append([]string(nil), members...), nil
+	if group, ok := s.groups[key(name)]; ok {
+		return append([]string(nil), group.Members...), nil
 	}
 	return r.backend.GroupMembers(ctx, name)
 }
@@ -302,7 +303,7 @@ func (r *Repository) loadUsers(ctx context.Context, candidates []users.User) (ma
 
 // loadGroups resolves every group's members, concurrently and bounded. Same
 // all-or-nothing rule as loadUsers.
-func (r *Repository) loadGroups(ctx context.Context) (map[string][]string, error) {
+func (r *Repository) loadGroups(ctx context.Context) (map[string]users.Group, error) {
 	list, err := r.backend.ListGroups(ctx)
 	if err != nil {
 		return nil, err
@@ -311,7 +312,7 @@ func (r *Repository) loadGroups(ctx context.Context) (map[string][]string, error
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	out := make(map[string][]string, len(list))
+	out := make(map[string]users.Group, len(list))
 	sem := make(chan struct{}, loadConcurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -323,10 +324,10 @@ func (r *Repository) loadGroups(ctx context.Context) (map[string][]string, error
 		}
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(name string) {
+		go func(group users.Group) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			members, err := r.backend.GroupMembers(ctx, name)
+			members, err := r.backend.GroupMembers(ctx, group.Name)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -339,8 +340,9 @@ func (r *Repository) loadGroups(ctx context.Context) (map[string][]string, error
 				}
 				return
 			}
-			out[key(name)] = members
-		}(g.Name)
+			group.Members = members
+			out[key(group.Name)] = group
+		}(g)
 	}
 	wg.Wait()
 	if firstErr != nil {
