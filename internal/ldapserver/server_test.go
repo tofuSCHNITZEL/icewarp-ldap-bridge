@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users"
+	"github.com/verdigado/icewarp-ldap-bridge/internal/users/cache"
 	"github.com/verdigado/icewarp-ldap-bridge/internal/users/memory"
 )
 
@@ -598,6 +599,169 @@ func TestSearchUsersByMemberOf(t *testing.T) {
 	}
 	if len(res.Entries) != 1 || res.Entries[0].GetAttributeValue("uid") != "johndoe" {
 		t.Fatalf("memberOf search returned %d entries, want just johndoe", len(res.Entries))
+	}
+}
+
+func TestMailingListMemberOf(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		for _, enabled := range []bool{false, true} {
+			name := "uncached"
+			if cached {
+				name = "cached"
+			}
+			if enabled {
+				name += "/enabled"
+			} else {
+				name += "/disabled"
+			}
+			t.Run(name, func(t *testing.T) {
+				backing := memory.New()
+				backing.Seed(users.User{Username: "johndoe", Password: "secret", Groups: []string{"group1"}})
+				backing.Seed(users.User{Username: "jane", Groups: []string{"ANNOUNCE"}})
+				backing.Seed(users.User{Username: "outsider"})
+				backing.SeedGroup("group1", "johndoe")
+				backing.SeedMailingList("announce", "Announcements", "JOHNDOE", "johndoe", "jane")
+				var repo users.Repository = backing
+				if cached {
+					repo = cache.New(backing, time.Hour, nil)
+				}
+				schema := groupSchema()
+				schema.IncludeMailingLists = enabled
+				addr := startServerSchema(t, repo, schema)
+				conn := dial(t, addr)
+				if err := conn.Bind("uid=johndoe,"+testBaseDN, "secret"); err != nil {
+					t.Fatalf("bind: %v", err)
+				}
+				for _, tc := range []struct {
+					base   string
+					scope  int
+					filter string
+				}{
+					{testBaseDN, ldap.ScopeWholeSubtree, "(uid=johndoe)"},
+					{"uid=johndoe," + testBaseDN, ldap.ScopeBaseObject, "(objectClass=*)"},
+				} {
+					res, err := conn.Search(&ldap.SearchRequest{
+						BaseDN: tc.base, Scope: tc.scope, Filter: tc.filter,
+					})
+					if err != nil || len(res.Entries) != 1 {
+						t.Fatalf("user search: result=%v err=%v", res, err)
+					}
+					got := res.Entries[0].GetAttributeValues("memberof")
+					wantCount := 1
+					if enabled {
+						wantCount = 2
+					}
+					if len(got) != wantCount || !contains(got, "cn=group1,"+testGroupBaseDN) {
+						t.Fatalf("memberOf: %v, want %d memberships including group1", got, wantCount)
+					}
+					if enabled && !contains(got, "cn=announce,"+testGroupBaseDN) {
+						t.Fatalf("mailing-list membership missing: %v", got)
+					}
+				}
+				if enabled {
+					for _, filter := range []string{
+						"(memberOf=cn=announce," + testGroupBaseDN + ")",
+						"(|(memberOf=cn=announce," + testGroupBaseDN + ")(uid=outsider))",
+					} {
+						res, err := conn.Search(&ldap.SearchRequest{
+							BaseDN: testBaseDN, Scope: ldap.ScopeWholeSubtree, Filter: filter,
+						})
+						if err != nil {
+							t.Fatalf("membership search: %v", err)
+						}
+						wantCount := 2
+						if filter[1] == '|' {
+							wantCount = 3
+						}
+						if len(res.Entries) != wantCount {
+							t.Fatalf("filter %s returned %d users, want %d", filter, len(res.Entries), wantCount)
+						}
+						for _, entry := range res.Entries {
+							if entry.GetAttributeValue("uid") == "jane" &&
+								len(entry.GetAttributeValues("memberof")) != 1 {
+								t.Fatalf("duplicate memberships: %v", entry.GetAttributeValues("memberof"))
+							}
+						}
+					}
+				}
+				u, err := repo.Get(context.Background(), "johndoe")
+				if err != nil || len(u.Groups) != 1 || u.Groups[0] != "group1" {
+					t.Fatalf("search mutated repository memberships: user=%+v err=%v", u, err)
+				}
+			})
+		}
+	}
+}
+
+type mailingListReadRepo struct {
+	*memory.Repository
+	listErr   error
+	memberErr error
+	listReads int
+}
+
+func (r *mailingListReadRepo) ListGroups(ctx context.Context) ([]users.Group, error) {
+	r.listReads++
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return r.Repository.ListGroups(ctx)
+}
+
+func (r *mailingListReadRepo) GroupMembers(ctx context.Context, name string) ([]string, error) {
+	if r.memberErr != nil {
+		return nil, r.memberErr
+	}
+	return r.Repository.GroupMembers(ctx, name)
+}
+
+func TestMailingListEnrichmentErrors(t *testing.T) {
+	outage := errors.New("IceWarp unavailable")
+	for _, tc := range []struct {
+		name      string
+		listErr   error
+		memberErr error
+	}{
+		{"list", outage, nil},
+		{"members", nil, outage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &mailingListReadRepo{Repository: memory.New(), listErr: tc.listErr, memberErr: tc.memberErr}
+			repo.Seed(users.User{Username: "alice"})
+			repo.SeedMailingList("announce", "Announcements", "alice")
+			schema := groupSchema()
+			schema.IncludeMailingLists = true
+			srv, err := New(repo, schema, nil)
+			if err != nil {
+				t.Fatalf("new server: %v", err)
+			}
+			got, err := srv.enrich(context.Background(), []users.User{{Username: "alice"}})
+			if !errors.Is(err, outage) || got != nil {
+				t.Fatalf("enrich: users=%v err=%v, want failure without partial results", got, err)
+			}
+		})
+	}
+}
+
+func TestMailingListsAreEnumeratedOncePerSearch(t *testing.T) {
+	repo := &mailingListReadRepo{Repository: memory.New()}
+	repo.Seed(users.User{Username: "alice"})
+	repo.Seed(users.User{Username: "bob"})
+	repo.SeedMailingList("announce", "Announcements", "alice", "bob")
+	schema := groupSchema()
+	schema.IncludeMailingLists = true
+	srv, err := New(repo, schema, nil)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	got, err := srv.enrich(context.Background(), []users.User{{Username: "alice"}, {Username: "bob"}})
+	if err != nil || len(got) != 2 || repo.listReads != 1 {
+		t.Fatalf("enrich: users=%v err=%v list reads=%d, want one enumeration", got, err, repo.listReads)
+	}
+	for _, u := range got {
+		if len(u.Groups) != 1 || u.Groups[0] != "announce" {
+			t.Errorf("mailing-list memberships for %s: %v", u.Username, u.Groups)
+		}
 	}
 }
 

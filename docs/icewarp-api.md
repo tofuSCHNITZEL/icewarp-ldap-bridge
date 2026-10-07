@@ -310,6 +310,16 @@ The bind primitive: validate a user's own password. **No admin session needed.**
   > account's other properties in one `getaccountproperties` call. Read-only in
   > practice for the bridge (membership is provisioned in IceWarp).
 
+  > **Mailing-list membership is supplemented separately.** The bridge has no
+  > verified per-user property for type-1 mailing-list membership. When
+  > `LDAP_GROUP_INCLUDE_MAILING_LISTS` is enabled, LDAP user searches reverse
+  > the lists' `GetAccountMemberInfoList` results (§10.1) and merge those
+  > memberships into `memberOf`, preserving `u_groups` and avoiding duplicates.
+  > Direct member addresses in `ICEWARP_DOMAIN` or its subdomains are mapped
+  > to mailbox local parts, as for ordinary groups. Matching is case-insensitive
+  > and requires a dot boundary before the configured domain; external
+  > addresses and special member tokens are excluded.
+
   > **Names live in `a_vcard`, not `a_name`/`u_name`.** Verified from the admin
   > console (HAR capture, same build): opening a user's name editor reads
   > `a_vcard` (`TAccountCard`), and `firstname`/`lastname`/`fileas`/`nickname`

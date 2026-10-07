@@ -34,6 +34,10 @@ type Schema struct {
 	// mapper at it. Empty disables group entries and memberOf.
 	GroupBaseDN string
 
+	// IncludeMailingLists augments user memberOf with mailing-list memberships
+	// resolved from the lists' member attributes, in addition to u_groups.
+	IncludeMailingLists bool
+
 	// AllowAnonymousReads, when true, serves search requests on a connection
 	// that never completed a bind (or only did an anonymous/RFC 4513 bind),
 	// instead of rejecting them with InsufficientAccessRights. Bind (and thus
@@ -215,6 +219,9 @@ func userFromAttrs(username string, attrs map[string][]string) users.User {
 // uid — always so under EmailAsUID — resolves to the right account instead of
 // having the domain appended a second time.
 func (s Schema) queryFromFilter(filter string) users.Query {
+	if strings.Contains(filter, "(|") || strings.Contains(filter, "(!") {
+		return users.Query{}
+	}
 	const key = "(uid="
 	i := strings.Index(strings.ToLower(filter), key)
 	if i < 0 {

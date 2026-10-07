@@ -53,6 +53,7 @@ type Group struct {
 	Name        string
 	Description string
 	Members     []string
+	MailingList bool
 }
 
 // Query narrows a List. The fields are pushdown hints — a backend uses them to

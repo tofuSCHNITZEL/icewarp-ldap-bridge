@@ -296,6 +296,7 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 				groups = append(groups, users.Group{
 					Name:        localPart(a.Email),
 					Description: a.Name,
+					MailingList: accountType == 1,
 				})
 			}
 			offset += len(page)
@@ -313,12 +314,14 @@ func (r *Repository) ListGroups(ctx context.Context) ([]users.Group, error) {
 
 // GroupMembers returns the member usernames of a group, or ErrNotFound if the
 // group doesn't exist. Non-address member tokens (e.g. the "[domain]" token the
-// admin picker can store) are skipped; addresses are reduced to the local part.
+// admin picker can store) and external addresses are skipped. Addresses in the
+// configured domain or its subdomains are reduced to the local part.
 func (r *Repository) GroupMembers(ctx context.Context, name string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, repoOpTimeout)
 	defer cancel()
 
 	const pageSize = 250
+	memberDomain := strings.ToLower(r.domain)
 	var members []string
 	for offset := 0; ; {
 		page, total, err := r.client.GetGroupMembers(ctx, r.email(name), offset, pageSize)
@@ -326,8 +329,11 @@ func (r *Repository) GroupMembers(ctx context.Context, name string) ([]string, e
 			return nil, mapRepoError(err)
 		}
 		for _, m := range page {
-			if strings.Contains(m, "@") { // real addresses only, not "[domain]" tokens
-				members = append(members, localPart(m))
+			local, domain, ok := strings.Cut(strings.TrimSpace(m), "@")
+			domain = strings.ToLower(domain)
+			if ok && local != "" && memberDomain != "" &&
+				(domain == memberDomain || strings.HasSuffix(domain, "."+memberDomain)) {
+				members = append(members, local)
 			}
 		}
 		offset += len(page)

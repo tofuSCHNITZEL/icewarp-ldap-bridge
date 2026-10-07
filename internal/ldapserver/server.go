@@ -297,6 +297,10 @@ func (s *Server) searchUsers(w *gldap.ResponseWriter, r *gldap.Request, m *gldap
 	// userDeferredAttrs) instead of excluding users that lack it at this stage.
 	var candidates []users.User
 	for _, u := range list {
+		if s.schema.IncludeMailingLists {
+			// u_groups is only a partial membership set until lists are resolved.
+			u.Groups = nil
+		}
 		if inScope(normalizeDN(s.schema.userDN(u.Username)), base, scope) &&
 			mayMatch(m.Filter, s.schema.attrs(u), userDeferredAttrs) {
 			candidates = append(candidates, u)
@@ -337,9 +341,14 @@ func (s *Server) userCandidates(ctx context.Context, filter string) ([]users.Use
 			}
 			return nil, err
 		}
-		out := make([]users.User, len(members))
-		for i, name := range members {
-			out[i] = users.User{Username: name}
+		out := make([]users.User, 0, len(members))
+		seen := make(map[string]bool, len(members))
+		for _, name := range members {
+			key := strings.ToLower(name)
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, users.User{Username: name})
+			}
 		}
 		return out, nil
 	}
@@ -438,7 +447,55 @@ func (s *Server) enrich(ctx context.Context, candidates []users.User) ([]users.U
 		}(c.Username)
 	}
 	wg.Wait()
-	return out, firstErr
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if s.schema.GroupBaseDN == "" || !s.schema.IncludeMailingLists || len(out) == 0 {
+		return out, nil
+	}
+	return s.addMailingListMemberships(ctx, out)
+}
+
+func (s *Server) addMailingListMemberships(ctx context.Context, userList []users.User) ([]users.User, error) {
+	groups, err := s.repo.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var lists []users.Group
+	for _, group := range groups {
+		if group.MailingList {
+			lists = append(lists, group)
+		}
+	}
+	lists, err = s.enrichGroups(ctx, lists)
+	if err != nil {
+		return nil, err
+	}
+	memberships := make(map[string][]string)
+	for _, list := range lists {
+		for _, member := range list.Members {
+			key := strings.ToLower(member)
+			memberships[key] = append(memberships[key], list.Name)
+		}
+	}
+	for i := range userList {
+		u := &userList[i]
+		// Get may return a cached record whose membership slice is immutable.
+		u.Groups = append([]string(nil), u.Groups...)
+		for _, name := range memberships[strings.ToLower(u.Username)] {
+			found := false
+			for _, existing := range u.Groups {
+				if strings.EqualFold(existing, name) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				u.Groups = append(u.Groups, name)
+			}
+		}
+	}
+	return userList, nil
 }
 
 // enrichGroups resolves each candidate group's members via repo.GroupMembers,

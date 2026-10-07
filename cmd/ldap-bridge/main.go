@@ -52,6 +52,7 @@ func main() {
 		Domain:              env("ICEWARP_DOMAIN"),
 		EmailAsUID:          truthy(env("LDAP_EMAIL_AS_UID")),
 		GroupBaseDN:         optionalEnv("LDAP_GROUP_BASE_DN"),
+		IncludeMailingLists: truthy(env("LDAP_GROUP_INCLUDE_MAILING_LISTS")),
 		AllowAnonymousReads: truthy(env("LDAP_ALLOW_ANONYMOUS_READS")),
 	}
 	if schema.AllowAnonymousReads {

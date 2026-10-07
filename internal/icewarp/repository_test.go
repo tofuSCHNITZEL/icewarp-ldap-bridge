@@ -543,6 +543,9 @@ func TestRepositoryListGroupsIncludesMailingLists(t *testing.T) {
 	if groups[1].Description != "Announce" {
 		t.Fatalf("mailing-list description: got %q, want %q", groups[1].Description, "Announce")
 	}
+	if groups[0].MailingList || !groups[1].MailingList {
+		t.Fatalf("group account types not preserved: %+v", groups)
+	}
 }
 
 // TestRepositoryListGroupsWithoutMailingLists: by default (no WithMailingLists)
@@ -565,14 +568,20 @@ func TestRepositoryListGroupsWithoutMailingLists(t *testing.T) {
 }
 
 func TestRepositoryGroupMembers(t *testing.T) {
-	mock := &mockClient{members: []string{"johndoe@icewarp.local", "jane@icewarp.local", "[icewarp.local]"}}
+	mock := &mockClient{members: []string{
+		"johndoe@icewarp.local", "jane@ICEWARP.LOCAL", "[icewarp.local]",
+		"alice@sub.icewarp.local", "bob@DEEP.SUB.ICEWARP.LOCAL",
+		"external@alias.example", "external@noticewarp.local",
+		"external@icewarp.local.example", "external@sub.noticewarp.local",
+		"@icewarp.local", "invalid@",
+	}}
 	got, err := newRepo(mock).GroupMembers(context.Background(), "group1")
 	if err != nil {
 		t.Fatalf("group members: %v", err)
 	}
-	// Addresses → local parts; the "[domain]" token is dropped.
-	if !slices.Equal(got, []string{"johndoe", "jane"}) {
-		t.Fatalf("members: got %v, want [johndoe jane]", got)
+	// Subdomains are accepted, but external and lookalike domains are not.
+	if !slices.Equal(got, []string{"johndoe", "jane", "alice", "bob"}) {
+		t.Fatalf("members: got %v, want [johndoe jane alice bob]", got)
 	}
 	if mock.memberWho != "group1@icewarp.local" {
 		t.Errorf("queried group %q, want group1@icewarp.local", mock.memberWho)

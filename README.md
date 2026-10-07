@@ -178,14 +178,22 @@ mappings); for a plain group claim, add a _Group Membership_ protocol mapper on
 top. Set the env var empty to disable groups entirely.
 
 Set `LDAP_GROUP_INCLUDE_MAILING_LISTS` to also expose IceWarp mailing lists
-(accounttype 1) the same way, alongside groups; off by default. The IceWarp
-display name of each group or mailing list is exposed as its LDAP `cn`,
-`description`, and `displayName`; `cn` falls back to the mailbox local part if
-the display name is empty, while `description` and `displayName` are omitted.
-The group `uid` is always the mailbox local part (the former `cn` value),
-regardless of `LDAP_EMAIL_AS_UID`. Group DNs and `memberOf` references still use
-the mailbox local part
-(`cn=<mailbox>,<group base DN>`) and remain stable when the display name changes.
+(accounttype 1) the same way, alongside groups; off by default. The IceWarp display name of each group or mailing list is exposed as its LDAP
+`cn`, `description`, and `displayName`; `cn` falls back to the mailbox local part
+when the display name is empty, while `description` and `displayName` are
+omitted. The group `uid` is always the mailbox local part, regardless of
+`LDAP_EMAIL_AS_UID`. Group DNs and `memberOf` references also use the mailbox
+local part (`cn=<mailbox>,<group base DN>`) and remain stable when the display
+name changes.
+
+When mailing lists are enabled, user `memberOf` also includes direct mailing-list
+memberships, derived from each list's members and merged with IceWarp's `u_groups`
+without duplicates. For both groups and mailing lists, member addresses in
+`ICEWARP_DOMAIN` or any of its subdomains are mapped to mailbox local parts.
+Domain matching is case-insensitive and requires a dot boundary; external
+addresses and special member tokens are ignored. With caching enabled, searches
+use the cached list members, refreshed on `CACHE_REFRESH_INTERVAL`. Without
+caching, each user search reads all enabled mailing lists' members once.
 
 **Use the mapper's `LOAD_GROUPS_BY_MEMBER_ATTRIBUTE` retrieve strategy** (the
 Keycloak default). It lines up with IceWarp's native lookups, so no operation
@@ -200,7 +208,7 @@ A group entry (`cn=<group>,<LDAP_GROUP_BASE_DN>`) carries these attributes:
 | LDAP attribute | IceWarp source                             | notes                                                                          |
 | -------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
 | `objectClass`  | fixed                                      | `top`, `groupOfNames`                                                          |
-| `cn`           | group mailbox local part                   | the RDN                                                                        |
+| `cn`           | group display name                         | falls back to the mailbox local part when empty                                |
 | `member`       | group members (`GetAccountMemberInfoList`) | member user DNs (`uid=<user>,<LDAP_USER_BASE_DN>`); omitted for an empty group |
 | `entryUUID`    | derived from the group name                | stable; namespaced so it never collides with a user's                          |
 

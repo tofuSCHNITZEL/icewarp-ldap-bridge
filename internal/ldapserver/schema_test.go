@@ -130,7 +130,7 @@ func TestGroupSchema(t *testing.T) {
 	// Group entry attributes: objectClass, cn, member DNs, entryUUID.
 	g := users.Group{Name: "group1", Description: "Group One", Members: []string{"jdoe", "jane"}}
 	a := s.groupAttrs(g)
-	if got := a["cn"]; len(got) != 1 || got[0] != "Group One" {
+	if got := a["cn"]; len(got) != 1 || got[0] != g.Description {
 		t.Errorf("group cn: %v", got)
 	}
 	if got := a["uid"]; len(got) != 1 || got[0] != g.Name {
@@ -198,6 +198,8 @@ func TestQueryFromFilter(t *testing.T) {
 		{"exact qualified email mode", emailUIDSchema(), "(&(uid=jdoe@icewarp.local)(objectclass=inetorgperson))", users.Query{Username: "jdoe"}},
 		{"prefix", localPartSchema(), "(uid=jd*)", users.Query{UsernamePrefix: "jd"}},
 		{"presence", localPartSchema(), "(uid=*)", users.Query{}},
+		{"optional uid", localPartSchema(), "(|(uid=jdoe)(memberOf=cn=announce,ou=groups,dc=icewarp,dc=local))", users.Query{}},
+		{"negated uid", localPartSchema(), "(!(uid=jdoe))", users.Query{}},
 		{"foreign domain not pushed", emailUIDSchema(), "(uid=jdoe@other.example)", users.Query{}},
 		{"no uid", localPartSchema(), "(entryUUID=abc)", users.Query{}},
 	}

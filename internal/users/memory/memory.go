@@ -42,6 +42,15 @@ func (r *Repository) SeedGroupDescription(name, description string, members ...s
 	r.groups[key(name)] = users.Group{Name: name, Description: description, Members: members}
 }
 
+// SeedMailingList inserts a mailing list with member usernames — for fixtures.
+func (r *Repository) SeedMailingList(name, description string, members ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.groups[key(name)] = users.Group{
+		Name: name, Description: description, Members: members, MailingList: true,
+	}
+}
+
 func (r *Repository) Authenticate(_ context.Context, username, password string) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
